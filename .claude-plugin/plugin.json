@@ -1,0 +1,6 @@
+{
+  "name": "boxis",
+  "version": "0.11.0",
+  "description": "Claude's answers in colour-coded boxes by type (decision, warning, scope, test, wrap-up), drawn with Skins on the inside. A check per box and an \"all\" button on the last answer. /boxis opens the mod's own colour panel.",
+  "dependencies": ["skins@hellosverre-mods"]
+}
