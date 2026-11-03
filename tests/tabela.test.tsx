@@ -84,3 +84,16 @@ test('tabela com bloco de código na mesma resposta: tabela do Boxis, bloco inte
     await ui.unmount()
   }
 })
+
+test('sem o Skins ligado a resposta com tabela ainda sai nas caixas', async ($, on) => {
+  mock.store(on, {})
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e) => {
+    const { Markdown } = $.ui.resolve(e)
+    return <Markdown text={e.props.text} />
+  })
+  const ui = await $.ui.mount({ plugin: 'boxis', surface: 'terminal', component: 'AssistantMessage', props: { text: TEXTO, isFirstOfReply: true } })
+  const caixas = (await ui.findAll({ type: 'Box' })).filter(b => b.props.borderColor)
+  expect(caixas.length).toBe(6)
+  expect(await ui.find({ type: 'Markdown', text: /Fiz a troca/ })).toBeDefined()
+  await ui.unmount()
+})

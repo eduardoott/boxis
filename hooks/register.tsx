@@ -465,6 +465,7 @@ export const register: Register = on => {
 
     const solto = async (texto: string) => {
       let feito
+      // Sem o Skins o $.skins não existe e a chamada joga; o motor recusa $.skins?. então o catch é o caminho normal.
       try { feito = await $.skins.markdown({ surface: e.surface, text: texto, columns: colunas }) } catch {}
       return feito ?? <Markdown text={texto} />
     }
