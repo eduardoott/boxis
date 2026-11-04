@@ -45,7 +45,7 @@ A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without 
 /boxis animation none|clock|client
 /boxis pins                      opens the Pins pane
 /boxis pins max 1-10             pins kept per session (default 5)
-/boxis default                   every colour and the intensity back to the original
+/boxis default                   every colour and the intensity back to the original (the pin limit stays)
 ```
 
 Claude can make the same changes through the `design` tool, for example "make the warning box orange".
@@ -56,7 +56,7 @@ Each box has a ○ on its title line. Clicking it marks the box as understood: i
 
 ## Pins
 
-The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so this is what keeps the store from filling up.
+The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it. Lowering the limit unpins nothing by itself: a session over it is trimmed on its next new pin. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so this is what keeps the store from filling up.
 
 In the terminal, ↗ on a pin jumps back to that box in the chat. Jumping works only in the terminal: the desktop app does not support it yet, so there the pane shows the boxes with × alone.
 
