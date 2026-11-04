@@ -11,20 +11,33 @@ export type Piece = { type: BoxType; text: string; title?: string }
 // Order matters: "❓ About you:" before the bare "❓". Each label also takes its Portuguese form
 // ("Sobre você", "Testar"), so answers written in either language give the same boxes.
 // Labelled slots need the label and the colon ("✅ Done:", "🧪 Test:"): a bare "✅ passed" is body text.
+// A bold label counts too, with the colon inside or outside the bold ("**Done:**", "__Done__:").
+const label = (words: string) => `(?:(\\*\\*|__)(?:${words})(?::\\1|\\1:)|(?:${words}):)`
 const STARTS: [RegExp, BoxType][] = [
-  [/^❓\s*(?:About you|Sobre você):\s*/iu, 'about-you'],
+  [new RegExp(`^❓\\s*${label('About you|Sobre você')}\\s*`, 'iu'), 'about-you'],
   [/^❓\s*/u, 'decision'],
   [/^⚠️?\s*/u, 'warning'],
   [/^🚧\s*/u, 'scope'],
   [/^📄\s*/u, 'document'],
   [/^📌\s*/u, 'object'],
-  [/^🧪\s*(?:Testar|Test):\s*/iu, 'test'],
+  [new RegExp(`^🧪\\s*${label('Testar|Test')}\\s*`, 'iu'), 'test'],
   // The wrap-up keeps "Done:" in its text: it sits next to "Planned:" in the same paragraph.
-  [/^✅\s*(?=(?:Feito|Done):)/iu, 'wrap-up'],
+  [new RegExp(`^✅\\s*(?=${label('Feito|Done')})`, 'iu'), 'wrap-up'],
 ]
 
-// A heading opens a body box of its own, titled with the subject.
-const HEADING = /^#{2,3}\s+(.+?)\s*#*\s*$/
+// A heading opens a body box of its own, titled with the subject. Closing hashes need a space
+// before them, so "### F#" keeps its "#".
+const HEADING = /^#{2,3}\s+(.+?)(?:\s+#+)?\s*$/
+const MAX_TITLE = 60
+// Same cleaning as the pin excerpt: the single _ stays, it is part of names like usp_x_y.
+function titleOf(raw: string): string {
+  const clean = raw
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*|__|~~|`|\*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return clean.length > MAX_TITLE ? `${clean.slice(0, MAX_TITLE - 1).trimEnd()}…` : clean
+}
 const TABLE_ROW = /^\s*\|/
 const TABLE_OWNERS: BoxType[] = ['warning', 'decision']
 const STEP = /^\s*\d+[.)]\s/
@@ -47,7 +60,8 @@ export function split(text: string): Piece[] {
   const close = () => {
     if (current) {
       const t = current.lines.join('\n').trim()
-      if (t) pieces.push({ type: current.type, text: t, ...(current.title ? { title: current.title } : {}) })
+      // A heading with nothing under it still shows: its title alone is part of the answer.
+      if (t || current.title) pieces.push({ type: current.type, text: t, ...(current.title ? { title: current.title } : {}) })
     }
     current = null
   }
@@ -62,7 +76,7 @@ export function split(text: string): Piece[] {
     if (!headerOnly) current!.lines.push(line)
   }
 
-  for (const line of text.split('\n')) {
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
     // Inside a code block nothing splits: the line goes to the piece where the block opened.
     if (fence) {
       current!.lines.push(...blanks, line)
@@ -86,7 +100,7 @@ export function split(text: string): Piece[] {
     if (heading) {
       close()
       blanks = []
-      current = { type: 'body', lines: [], title: heading[1].replace(/\*\*|__|`/g, '').trim() }
+      current = { type: 'body', lines: [], title: titleOf(heading[1]) }
       continue
     }
     const found = typeOfLine(line)

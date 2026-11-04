@@ -98,3 +98,72 @@ test('the legacy "lidas" key is read once and deleted on the next check', async 
   expect((stored.checked as string[])[0]).toBe('keep:0')
   await ui.unmount()
 })
+
+test('a heading with nothing under it draws a title-only box that can be pinned and shown in the pane', async ($, on) => {
+  const { stored } = world(on, { config: { check: false } })
+  const ui = await mount($, '### Empty\n\n⚠️ Careful.')
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'pin-1'])
+  expect(await texts(ui)).toContain('Empty')
+  await ui.press({ key: 'pin-0' })
+  const pins = (stored.pins as Record<string, Pin[]>).s1
+  expect(pins.map(p => [p.type, p.title, p.text])).toEqual([['body', 'Empty', '']])
+  await ui.unmount()
+  const pane = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'Pane', requestId: 'boxis-pins', props: {} } as never)
+  expect(await texts(pane)).toContain('Empty')
+  await pane.unmount()
+})
+
+test('a check click with "checked" already stored does not touch the legacy key', async ($, on) => {
+  const { deleted, stored } = world(on, { checked: ['keep:0'] })
+  const ui = await mount($, 'Body.\n\n⚠️ Careful.')
+  await ui.press({ key: 'check-1' })
+  expect(deleted).toEqual([])
+  expect((stored.checked as string[]).length).toBe(2)
+  await ui.unmount()
+})
+
+test('pin expiry boundary: exactly PIN_TTL_MS old is dropped, one millisecond younger is kept', () => {
+  const edge = pin('edge:0', NOW - PIN_TTL_MS)
+  const inside = pin('in:0', NOW - PIN_TTL_MS + 1)
+  expect(dropExpired({ a: [edge, inside] }, NOW)).toEqual({ a: [inside] })
+})
+
+test('the pins pane shows no "answer" title for a body pin without a heading', async ($, on) => {
+  const { stored } = world(on, { config: { check: false } })
+  const ui = await mount($, 'Body.\n\n⚠️ Careful.')
+  await ui.press({ key: 'pin-0' })
+  expect((stored.pins as Record<string, Pin[]>).s1.map(p => p.title)).toEqual(['answer'])
+  await ui.unmount()
+  const pane = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'Pane', requestId: 'boxis-pins', props: {} } as never)
+  expect(await texts(pane)).not.toContain('answer')
+  await pane.unmount()
+})
+
+test('pinning reads the pin limit from the store, not from a stale copy', async ($, on) => {
+  const { stored } = world(on, { config: { check: false } })
+  const ui = await mount($, TWO_SUBJECTS)
+  // Another window lowered the limit after this one drew the answer.
+  stored.config = { check: false, maxPins: 1 }
+  await ui.press({ key: 'pin-0' })
+  await ui.press({ key: 'pin-1' })
+  expect((stored.pins as Record<string, Pin[]>).s1.map(p => p.title)).toEqual(['Labels'])
+  await ui.unmount()
+})
+
+test('session start reads the config from the store again', async ($, on) => {
+  const { stored } = world(on, { config: { check: false } })
+  on('command.register', async ($, e) => ({ value: { command: e.name } }) as never)
+  on('tool.register', async () => ({ value: undefined }) as never)
+  on('session.start', async () => ({ cwd: '/repo' }) as never)
+  const borders = async () => {
+    const ui = await mount($, 'Body.')
+    const n = (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.borderColor).length
+    await ui.unmount()
+    return n
+  }
+  expect(await borders()).toBe(1)
+  // Another window turned the boxes off; this one picks it up on its next session start.
+  stored.config = { enabled: false }
+  await $.session.start({ source: 'startup', cwd: '/repo', surface: 'terminal', isInteractive: true } as never)
+  expect(await borders()).toBe(0)
+})

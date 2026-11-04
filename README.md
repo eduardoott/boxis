@@ -12,6 +12,8 @@ claude plugin install boxis@euler-tools
 
 Boxis is opt-in: it changes how every answer looks, so each person installs it for themselves. `/boxis off` turns it off without uninstalling.
 
+After updating, restart any Claude window that is already open: an older version still running could rewrite pins saved in the new shape.
+
 ## Slot contract
 
 Boxis splits an answer by the start of its lines. A line that starts with one of these prefixes opens a box of that type; the lines after it stay in that box until another prefix or plain text. Each label works in English and in Portuguese, and both give identical boxes.
@@ -28,11 +30,11 @@ Boxis splits an answer by the start of its lines. A line that starts with one of
 | `✅ Done:` or `✅ Feito:`, as in `✅ Done: ... ➡️ Next: ...` | wrap-up | wrap-up |
 | `## subject` or `### subject` | body | the subject |
 
-A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without the colon or a bare `✅ passed` is body text. A table right under a warning or a decision (its alternatives) stays in that box. Everything else is body text, in a purple box with no title. A heading starts a new body box titled with its subject, so an answer that covers several subjects gives one box per subject. An answer with none of these prefixes is one plain box. Code blocks never split, and an answer over 9000 characters stays in one box.
+A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without the colon or a bare `✅ passed` is body text. A table right under a warning or a decision (its alternatives) stays in that box. Everything else is body text, in a purple box with no title. A heading starts a new body box titled with its subject, so an answer that covers several subjects gives one box per subject. A heading with nothing under it still shows as a title-only box; text that comes after a slot inside a subject goes to an untitled body box. A label in bold works too, with the colon inside or outside the bold (`✅ **Done:**`, `🧪 **Test**:`). An answer with none of these prefixes is one plain box. Code blocks never split, and an answer over 9000 characters stays in one box.
 
 ## Commands and the colour pane
 
-`/boxis` opens the colour pane: per type, ◀ ▶ step the border colour and a button turns the background on or off; the top row sets on/off, background intensity, max pins, light or dark screen, the ✓ check and the animation. Changes apply to every session.
+`/boxis` opens the colour pane: per type, ◀ ▶ step the border colour and a button turns the background on or off; the top row sets on/off, background intensity, max pins, light or dark screen, the ✓ check and the animation. Changes apply to every session; other open windows pick them up on their next session start or pin.
 
 ```
 /boxis status                    the config as text
@@ -56,7 +58,7 @@ Each box has a ○ on its title line. Clicking it marks the box as understood: i
 
 ## Pins
 
-The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it. Lowering the limit unpins nothing by itself: a session over it is trimmed on its next new pin. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so this is what keeps the store from filling up.
+The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it. Lowering the limit unpins nothing by itself: a session over it is trimmed on its next new pin. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so expiry is what clears the pins those sessions leave behind. The size of the stored pins is capped by a byte budget: past it, the oldest pins go first.
 
 In the terminal, ↗ on a pin jumps back to that box in the chat. Jumping works only in the terminal: the desktop app does not support it yet, so there the pane shows the boxes with × alone.
 

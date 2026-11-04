@@ -92,6 +92,11 @@ async function current($: EngineInterface): Promise<Config> {
   if (!config) config = readConfig(await $.store.get(CONFIG_KEY))
   return config
 }
+// Another window may have changed the config: one store read refreshes the copy.
+async function fresh($: EngineInterface): Promise<Config> {
+  config = readConfig(await $.store.get(CONFIG_KEY))
+  return config
+}
 async function change($: EngineInterface, m: Change): Promise<{ text: string; error?: boolean }> {
   // Read again from the store: the CLI and the app write the same config, and the copy may be stale.
   const r = apply(readConfig(await $.store.get(CONFIG_KEY)), m)
@@ -106,9 +111,16 @@ async function change($: EngineInterface, m: Change): Promise<{ text: string; er
 // The id the screen gives the message does not work: live it is the API msg_, reopened the row uuid.
 // The order is the order of checking, latest last: that is what the cap keeps.
 let checked: string[] | null = null
+// True when the last disk read found the marks only under the legacy key.
+let fromLegacy = false
 async function readChecked($: EngineInterface, fromDisk = false): Promise<string[]> {
   if (!checked || fromDisk) {
-    const stored = (await $.store.get(CHECKED_KEY)) ?? (await $.store.get(LEGACY_CHECKED_KEY))
+    let stored = await $.store.get(CHECKED_KEY)
+    fromLegacy = false
+    if (stored === undefined || stored === null) {
+      stored = await $.store.get(LEGACY_CHECKED_KEY)
+      fromLegacy = stored !== undefined && stored !== null
+    }
     checked = Array.isArray(stored) ? stored.filter((x): x is string => typeof x === 'string') : []
   }
   return checked
@@ -121,8 +133,11 @@ async function check($: EngineInterface, ids: string[], on: boolean) {
   const others = before.filter(x => !these.has(x))
   const next = (on ? [...others, ...these] : others).slice(-MAX_CHECKED)
   if (!await save($, CHECKED_KEY, next, 'the check marks')) return
-  // The marks now live under CHECKED_KEY: the old key is only garbage.
-  try { await $.store.delete(LEGACY_CHECKED_KEY) } catch {}
+  // The marks now live under CHECKED_KEY: the old key is only garbage, deleted once.
+  if (fromLegacy) {
+    try { await $.store.delete(LEGACY_CHECKED_KEY) } catch {}
+    fromLegacy = false
+  }
   checked = next
   $.ui.invalidate('ui.render')
   if (on && ids.some(id => !before.includes(id))) celebrate($)
@@ -437,7 +452,7 @@ async function setPin($: EngineInterface, id: string, on: boolean, info?: BoxInf
   let pinned = false
   let dropped: Pin[] = []
   const created = await $.clock.now()
-  const limit = (await current($)).maxPins
+  const limit = (await fresh($)).maxPins
   const saved = await savePins($, list => {
     const has = list.some(p => p.id === id)
     if (!on) return has ? list.filter(p => p.id !== id) : list
@@ -534,7 +549,7 @@ export const titleFailed = (requestId: string, element: string) => failedTitles.
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | pins | on | off | check on|off | animation none|clock|client | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
+    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | pins | pins max N | on | off | check on|off | animation none|clock|client | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
     await $.tool.register({
       name: 'design',
       description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (enabled), the ✓ button that marks a box as understood (check), the animation of the boxes on arrival (animation: none, clock, client), background intensity (intensity, 0 to 100), light or dark screen (light), pins kept per session (maxPins, 1 to 10) and, per type, the border and title colour (color) and the background colour (background). Types: ${TYPES_LIST}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
@@ -561,7 +576,7 @@ export const register: Register = on => {
         additionalProperties: false,
       },
     })
-    await current($)
+    await fresh($)
     try {
       const messages = await $.session.messages()
       if (Array.isArray(messages)) {

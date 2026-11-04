@@ -61,6 +61,12 @@ test('splitTables finds the table and ignores the one inside a code block', () =
   expect(t[1]).toEqual({ kind: 'table', header: ['A', 'B'], rows: [['1', 'a rather long cell']] })
 })
 
+test('splitTables with CRLF line ends: the table inside a code block is still ignored', () => {
+  const t = splitTables('Before\r\n\r\n```\r\n| x | y |\r\n|---|---|\r\n```\r\n\r\n| A |\r\n|---|\r\n| 1 |')
+  expect(t.map(x => x.kind)).toEqual(['text', 'table'])
+  expect(t[1]).toEqual({ kind: 'table', header: ['A'], rows: [['1']] })
+})
+
 // Regression: a table and a code block in the same answer sent the table to Skins, cut with "…".
 test('a table and a code block in one answer: the Boxis table, and the whole block in the drawing below', async ($, on) => {
   mock.store(on, {})

@@ -21,7 +21,7 @@ function cells(line: string): string[] {
 export const hasTable = (text: string) => splitTables(text).some(t => t.kind === 'table')
 
 export function splitTables(text: string): Segment[] {
-  const lines = text.split('\n')
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
   const segments: Segment[] = []
   let loose: string[] = []
   let fence: Fence | null = null
