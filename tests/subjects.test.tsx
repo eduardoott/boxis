@@ -42,6 +42,18 @@ test('each heading becomes a body box titled with its subject; the warning keeps
   await ui.unmount()
 })
 
+const WARNED = 'Body.\n\n⚠️ Risky thing. Verdict: note only.\n\n| Option | What |\n|---|---|\n| Keep (recommended) | the test |\n| Revert | checkout |\n\nAfter the table.'
+
+test('the alternatives table under a warning stays in the warning box, drawn as a table', async ($, on) => {
+  world(on, { config: { check: false } })
+  const ui = await mount($, WARNED)
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'pin-1', 'pin-2'])
+  const shown = [...await texts(ui), ...await markdown(ui)].join(' | ')
+  expect(shown).toContain('Keep (recommended)')
+  expect(shown).toContain('After the table.')
+  await ui.unmount()
+})
+
 test('a single heading still draws its title; an answer with no heading has no title', async ($, on) => {
   world(on, { config: { check: false } })
   const titled = await mount($, '### Only subject\nSome text.')

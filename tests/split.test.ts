@@ -125,6 +125,16 @@ test('one heading alone still gives its titled box; a heading with nothing under
   expect(types('# Big title\ntext')).toEqual(['body'])
 })
 
+test('a table right under a warning or a decision stays in that box; text after it is body again', () => {
+  const t = '⚠️ Risk.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nAfter.\n\n| x |\n|---|\n| y |'
+  expect(split(t)).toEqual([
+    { type: 'warning', text: 'Risk.\n\n| a | b |\n|---|---|\n| 1 | 2 |' },
+    { type: 'body', text: 'After.\n\n| x |\n|---|\n| y |' },
+  ])
+  expect(types('❓ Which?\n| a |\n|---|\n| 1 |')).toEqual(['decision'])
+  expect(types('🚧 Out.\n\n| a |\n|---|\n| 1 |')).toEqual(['scope', 'body'])
+})
+
 test('labelled slots need label and colon: a bare check is body, the wrap-up keeps its label', () => {
   expect(types('✅ passed')).toEqual(['body'])
   expect(split('✅ Feito: x. ➡️ Planejado: y.')).toEqual([{ type: 'wrap-up', text: 'Feito: x. ➡️ Planejado: y.' }])

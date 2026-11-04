@@ -25,6 +25,8 @@ const STARTS: [RegExp, BoxType][] = [
 
 // A heading opens a body box of its own, titled with the subject.
 const HEADING = /^#{2,3}\s+(.+?)\s*#*\s*$/
+const TABLE_ROW = /^\s*\|/
+const TABLE_OWNERS: BoxType[] = ['warning', 'decision']
 const STEP = /^\s*\d+[.)]\s/
 const INDENTED = /^\s+\S/
 
@@ -91,6 +93,11 @@ export function split(text: string): Piece[] {
     if (found) {
       // "🧪 Test:" alone only becomes the box title; with text after it, the text stays.
       put(found.type, found.rest, found.type === 'test' && found.rest.trim() === '')
+      continue
+    }
+    // The alternatives table under a warning or a decision belongs to it, not to a new body box.
+    if (current && TABLE_OWNERS.includes(current.type) && TABLE_ROW.test(line)) {
+      put(current.type, line)
       continue
     }
     if (current?.type === 'test' && (STEP.test(line) || INDENTED.test(line))) {

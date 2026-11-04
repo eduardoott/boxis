@@ -28,7 +28,7 @@ Boxis splits an answer by the start of its lines. A line that starts with one of
 | `✅ Done:` or `✅ Feito:`, as in `✅ Done: ... ➡️ Next: ...` | wrap-up | wrap-up |
 | `## subject` or `### subject` | body | the subject |
 
-A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without the colon or a bare `✅ passed` is body text. Everything else is body text, in a purple box with no title. A heading starts a new body box titled with its subject, so an answer that covers several subjects gives one box per subject. An answer with none of these prefixes is one plain box. Code blocks never split, and an answer over 9000 characters stays in one box.
+A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without the colon or a bare `✅ passed` is body text. A table right under a warning or a decision (its alternatives) stays in that box. Everything else is body text, in a purple box with no title. A heading starts a new body box titled with its subject, so an answer that covers several subjects gives one box per subject. An answer with none of these prefixes is one plain box. Code blocks never split, and an answer over 9000 characters stays in one box.
 
 ## Commands and the colour pane
 
