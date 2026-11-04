@@ -117,13 +117,21 @@ async function readChecked($: EngineInterface, fromDisk = false): Promise<string
 // The requested state, not a toggle: a click on a stale copy would undo the other process's mark.
 async function check($: EngineInterface, ids: string[], on: boolean) {
   const these = new Set(ids)
-  const others = (await readChecked($, true)).filter(x => !these.has(x))
+  const before = await readChecked($, true)
+  const others = before.filter(x => !these.has(x))
   const next = (on ? [...others, ...these] : others).slice(-MAX_CHECKED)
   if (!await save($, CHECKED_KEY, next, 'the check marks')) return
   // The marks now live under CHECKED_KEY: the old key is only garbage.
   try { await $.store.delete(LEGACY_CHECKED_KEY) } catch {}
   checked = next
   $.ui.invalidate('ui.render')
+  if (on && ids.some(id => !before.includes(id))) celebrate($)
+}
+// A signal for other mods (Pixelband plays its burst): a state write, not a slash command, so it leaves
+// no chat line and costs no tokens. With nobody listening, nothing happens.
+const CELEBRATE = { plugin: 'boxis', key: 'celebrate' } as const
+function celebrate($: EngineInterface) {
+  void $.clock.now().then(t => $.state.set(CELEBRATE, t)).catch(() => {})
 }
 // 32-bit FNV-1a plus the length: short to store and stable across sessions.
 export function signature(text: string): string {
