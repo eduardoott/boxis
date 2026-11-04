@@ -1,16 +1,17 @@
 // Acha as tabelas markdown de um pedaço para o Caixinhas desenhá-las com quebra de linha.
 // Função pura; o desenho fica em register.tsx.
 
-export type Trecho =
+import { abreCerca, fechaCerca, type Cerca } from './cerca'
+
+type Trecho =
   | { tipo: 'texto'; texto: string }
   | { tipo: 'tabela'; cabecalho: string[]; linhas: string[][] }
 
-const CERCA = /^\s*(```|~~~)/
 const SEPARADOR = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
 
 const ehLinhaDeTabela = (l: string) => l.trim().startsWith('|') || /\S\s*\|\s*\S/.test(l)
 
-export function celulas(linha: string): string[] {
+function celulas(linha: string): string[] {
   let t = linha.trim()
   if (t.startsWith('|')) t = t.slice(1)
   if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1)
@@ -23,7 +24,7 @@ export function separarTabelas(texto: string): Trecho[] {
   const linhas = texto.split('\n')
   const trechos: Trecho[] = []
   let solto: string[] = []
-  let cerca: string | null = null
+  let cerca: Cerca | null = null
   const soltar = () => {
     const t = solto.join('\n').trim()
     if (t) trechos.push({ tipo: 'texto', texto: t })
@@ -34,18 +35,19 @@ export function separarTabelas(texto: string): Trecho[] {
     const l = linhas[i]
     if (cerca) {
       solto.push(l)
-      if (l.trim().startsWith(cerca)) cerca = null
+      if (fechaCerca(l, cerca)) cerca = null
       continue
     }
-    const m = CERCA.exec(l)
+    const m = abreCerca(l)
     if (m) {
-      cerca = m[1]
+      cerca = m
       solto.push(l)
       continue
     }
-    // Cabeçalho seguido do separador |---|---| abre uma tabela.
-    if (ehLinhaDeTabela(l) && i + 1 < linhas.length && SEPARADOR.test(linhas[i + 1])) {
-      const cabecalho = celulas(l)
+    // Cabeçalho seguido do separador |---|---| abre uma tabela. Como no GFM, o separador tem as mesmas
+    // colunas do cabeçalho: "cat x | grep y" seguido de --- é texto e linha horizontal.
+    const cabecalho = ehLinhaDeTabela(l) && i + 1 < linhas.length && SEPARADOR.test(linhas[i + 1]) ? celulas(l) : null
+    if (cabecalho && celulas(linhas[i + 1]).length === cabecalho.length) {
       const corpo: string[][] = []
       let j = i + 2
       while (j < linhas.length && linhas[j].trim() && ehLinhaDeTabela(linhas[j])) {

@@ -19,7 +19,7 @@ export type TituloProps = {
 }
 
 // Sliders. 5 pulsos de 3 tons a 100 ms: mais piscadas e mais rápidas, a pedido dele (01/11).
-export const PULSOS = 5
+export const PULSOS_PONTO = 5
 export const QUADROS_PONTO = ['◦', '◉', '●']
 export const BATIDA_PONTO_MS = 100
 // A bolinha em 8 fases. Só existem 4 glifos de preenchimento: cada um passa antes apagado e depois aceso.
@@ -56,7 +56,7 @@ const Titulo: ClientModule<TituloProps, Local> = (props, surface) => {
     ref.pulso = surface.every(BATIDA_PONTO_MS, () => {
       const cur = atual()
       const passo = cur.passo + 1
-      if (passo >= PULSOS * QUADROS_PONTO.length) {
+      if (passo >= PULSOS_PONTO * QUADROS_PONTO.length) {
         ref.pulso?.()
         ref.pulso = undefined
       }
@@ -67,8 +67,9 @@ const Titulo: ClientModule<TituloProps, Local> = (props, surface) => {
   // Button, e não onPointer no Text: é o que mantém a seta do mouse em cima do check.
   const clicar = () => {
     if (ref.check || ref.espera) return
+    // O estado pedido, e não "alternar": o "all" no meio dos quadros não é desfeito no fim deles.
     if (props.marcada) {
-      surface.post({ lida: ref.chave })
+      surface.post({ lida: ref.chave, on: false })
       return
     }
     surface.post({ fechar: ref.chave })
@@ -80,7 +81,7 @@ const Titulo: ClientModule<TituloProps, Local> = (props, surface) => {
         ref.check = undefined
         // Fica no ✓ até a prop chegar, para não piscar de volta no ○.
         ref.espera = true
-        surface.post({ lida: ref.chave })
+        surface.post({ lida: ref.chave, on: true })
       }
       surface.setState({ ...cur, quadro })
     })
@@ -98,7 +99,7 @@ const Titulo: ClientModule<TituloProps, Local> = (props, surface) => {
         </Text>
       </Box>
       <Box flexDirection="row" gap={1} flexShrink={0}>
-        <Button key={`pin-${props.chave}`} label={props.fixada ? PIN.fixada : PIN.solta} onPress={() => surface.post({ pin: ref.chave })}>
+        <Button key={`pin-${props.chave}`} label={props.fixada ? PIN.fixada : PIN.solta} onPress={() => surface.post({ pin: ref.chave, on: !props.fixada })}>
           {props.fixada ? <Text>{PIN.fixada}</Text> : <Text dimColor>{PIN.solta}</Text>}
         </Button>
         {props.todas ? (

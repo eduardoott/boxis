@@ -4,8 +4,7 @@ import { AJUDA, BASE, ROTULO_ANIMACAO, TELA, TIPOS, VERDE, aplicar, lerComando, 
 import { pesos, separarTabelas, temTabela } from './tabela'
 import type { BrilhoProps } from './brilho'
 import { PIN, type TituloProps } from './titulo'
-
-const CERCA = /^\s*(```|~~~)/m
+import { abreCerca, cercaAbertaNoFim, fechaCerca, temCerca, type Cerca } from './cerca'
 
 // Espaço das caixas, em células (fase 1 do plano-caixinhas.md).
 const ESPACO_Y = 1
@@ -23,7 +22,7 @@ export const BATIDA_MS = 400
 export const CLAREAR = 0.35
 // Quanto da cor do tipo entra no fundo da caixa acesa: é o que faz ela "acender".
 export const ACENDER = 0.4
-export const TIPOS_QUE_PULSAM: Tipo[] = ['aviso', 'decisao']
+const TIPOS_QUE_PULSAM: Tipo[] = ['aviso', 'decisao']
 const BRANCO = '#FFFFFF'
 // Quadros 0 a 2*PULSOS-1: par acende, ímpar apaga. Passou do último, a cadeia está terminada.
 const QUADROS = 2 * PULSOS
@@ -42,7 +41,7 @@ export const PISCA_MS = 150
 export const FECHAR_MS = 2 * PISCADAS * PISCA_MS
 const FECHANDO_FUNDO = { aceso: 0.22, apagado: 0.1 }
 const FECHANDO_BORDA = 0.35
-export const BRILHO_CHEGADA_MS = 1400
+const BRILHO_CHEGADA_MS = 1400
 // Quanto de branco cada célula da cauda do brilho leva, da cabeça para o fim.
 const CAUDA = [0.85, 0.65, 0.45, 0.3, 0.15]
 const MAX_VISTAS = 200
@@ -50,15 +49,16 @@ const MAX_VISTAS = 200
 const CHAVE = 'config'
 const CHAVE_LIDAS = 'lidas'
 // Só as últimas marcadas ficam guardadas, para a lista não crescer sem fim.
-const MAX_LIDAS = 500
+const MAX_LIDAS = 2000
 // O Markdown não tem prop de tachado: cada linha ganha ~~ por dentro do marcador de lista ou título,
 // senão a lista deixa de ser lista. Bloco de código e linha de tabela ficam como estão.
 const MARCADOR = /^(\s*(?:[-*+]|\d+[.)]|#{1,6}|>)\s+)?(.*)$/
 function tachar(texto: string): string {
-  let naCerca = false
+  let cerca: Cerca | null = null
   return texto.split('\n').map(linha => {
-    if (CERCA.test(linha)) { naCerca = !naCerca; return linha }
-    if (naCerca || !linha.trim() || /^\s*\|/.test(linha)) return linha
+    if (cerca) { if (fechaCerca(linha, cerca)) cerca = null; return linha }
+    cerca = abreCerca(linha)
+    if (cerca || !linha.trim() || /^\s*\|/.test(linha)) return linha
     const [, marcador = '', resto] = linha.match(MARCADOR) ?? []
     return resto?.trim() ? `${marcador}~~${resto.trim()}~~` : linha
   }).join('\n')
@@ -67,23 +67,43 @@ function tachar(texto: string): string {
 const FERRAMENTA = 'mcp__boxis__design'
 const PAINEL = 'boxis-config'
 
-// Cópia da config guardada; lida no começo da sessão e trocada a cada mudança.
+// Toda gravação passa por aqui: falhar (store cheio, disco) vira toast, nunca rejeição solta.
+async function gravar($: EngineInterface, chave: string, valor: unknown, oque: string): Promise<boolean> {
+  try {
+    await $.store.set(chave, valor)
+    return true
+  } catch {
+    avisarFalha($, oque)
+    return false
+  }
+}
+function avisarFalha($: EngineInterface, oque: string) {
+  try { $.ui.toast(`Boxis: could not save ${oque}`) } catch {}
+}
+// Para os onPress: o que der errado antes de gravar (a leitura do store) também vira o toast.
+function tentar($: EngineInterface, feito: Promise<unknown>, oque: string) {
+  feito.catch(() => avisarFalha($, oque))
+}
+
+// Cópia da config guardada, para desenhar; quem muda relê o store antes.
 let config: Config | null = null
 async function atual($: EngineInterface): Promise<Config> {
   if (!config) config = lerConfig(await $.store.get(CHAVE))
   return config
 }
 async function mudar($: EngineInterface, m: Mudanca): Promise<{ texto: string; erro?: boolean }> {
-  const r = aplicar(await atual($), m)
+  // Relida do store: o CLI e o app gravam a mesma config, e a cópia pode ter a do outro por cima.
+  const r = aplicar(lerConfig(await $.store.get(CHAVE)), m)
   if ('erro' in r) return { texto: r.erro, erro: true }
+  if (!await gravar($, CHAVE, r.cfg, 'the config')) return { texto: 'Boxis: could not save the config', erro: true }
   config = r.cfg
-  await $.store.set(CHAVE, r.cfg)
   $.ui.invalidate('ui.render')
   return { texto: resumo(r.cfg) }
 }
 
 // Caixas marcadas como entendidas, por "assinatura do texto da resposta:posição da caixa".
 // O id que a tela dá à mensagem não serve: ao vivo é o msg_ da API, reaberta é o uuid da linha.
+// A ordem é a da marcação, a mais recente por último: é ela que o teto preserva.
 let lidas: string[] | null = null
 async function lerLidas($: EngineInterface, doDisco = false): Promise<string[]> {
   if (!lidas || doDisco) {
@@ -91,6 +111,16 @@ async function lerLidas($: EngineInterface, doDisco = false): Promise<string[]> 
     lidas = Array.isArray(guardado) ? guardado.filter((x): x is string => typeof x === 'string') : []
   }
   return lidas
+}
+// Põe (on) ou tira as ids, relendo do disco: o CLI e o app gravam no mesmo arquivo.
+// O estado pedido, e não "alternar": um clique sobre a cópia velha desfaria a marca do outro processo.
+async function marcar($: EngineInterface, ids: string[], on: boolean) {
+  const estas = new Set(ids)
+  const outras = (await lerLidas($, true)).filter(x => !estas.has(x))
+  const nova = (on ? [...outras, ...estas] : outras).slice(-MAX_LIDAS)
+  if (!await gravar($, CHAVE_LIDAS, nova, 'the check marks')) return
+  lidas = nova
+  $.ui.invalidate('ui.render')
 }
 // FNV-1a de 32 bits mais o tamanho: curto para guardar e estável entre sessões.
 function assinatura(texto: string): string {
@@ -112,11 +142,9 @@ function verDesenhada(chave: string, caixas: number) {
   }
 }
 async function marcarTodas($: EngineInterface) {
-  const todas = new Set(await lerLidas($, true))
-  for (const [chave, n] of desenhadas) for (let i = 0; i < n; i++) todas.add(`${chave}:${i}`)
-  lidas = [...todas].slice(-MAX_LIDAS)
-  await $.store.set(CHAVE_LIDAS, lidas)
-  $.ui.invalidate('ui.render')
+  const todas: string[] = []
+  for (const [chave, n] of desenhadas) for (let i = 0; i < n; i++) todas.push(`${chave}:${i}`)
+  await marcar($, todas, true)
 }
 
 // A última resposta da conversa, aparada: só ela ganha o botão "marcar todas". Ao abrir a sessão vem
@@ -186,31 +214,32 @@ function pulsoDa(texto: string): Cadeia | undefined {
   return undefined
 }
 
-async function alternarLida($: EngineInterface, id: string) {
-  // Relida do disco: o CLI e o app gravam no mesmo arquivo, e a cópia em memória pode estar velha.
-  const atuais = await lerLidas($, true)
-  lidas = atuais.includes(id) ? atuais.filter(x => x !== id) : [...atuais, id].slice(-MAX_LIDAS)
-  await $.store.set(CHAVE_LIDAS, lidas)
-  $.ui.invalidate('ui.render')
-}
-
 // Caixas fechando, pelo mesmo id da marcação, com a borda acesa ou não: um redesenho a cada PISCA_MS.
 const fechando = new Map<string, boolean>()
-function fechar($: EngineInterface, id: string) {
+// Exportada para o teste dar um $ cujo relógio falha.
+export function fechar($: Pick<EngineInterface, 'clock' | 'ui'>, id: string) {
   if (fechando.has(id)) return
   fechando.set(id, true)
   $.ui.invalidate('ui.render')
-  const tique = $.clock.every(PISCA_MS, () => {
-    // O último tique pode cair junto com o fim: não ressuscitar a caixa.
-    if (!fechando.has(id)) return
-    fechando.set(id, !fechando.get(id))
-    $.ui.invalidate('ui.render')
-  })
-  $.clock.after(FECHAR_MS, () => {
-    tique.cancel()
+  let tique: { cancel: () => void } | undefined
+  try {
+    tique = $.clock.every(PISCA_MS, () => {
+      // O último tique pode cair junto com o fim: não ressuscitar a caixa.
+      if (!fechando.has(id)) return
+      fechando.set(id, !fechando.get(id))
+      $.ui.invalidate('ui.render')
+    })
+    $.clock.after(FECHAR_MS, () => {
+      tique?.cancel()
+      fechando.delete(id)
+      $.ui.invalidate('ui.render')
+    })
+  } catch {
+    // Sem o fim marcado, o tique piscaria para sempre.
+    tique?.cancel()
     fechando.delete(id)
     $.ui.invalidate('ui.render')
-  })
+  }
 }
 
 // Pins: caixas que a pessoa fixou para voltar a elas, por sessão. Guardadas como { [sessão]: Pin[] }.
@@ -221,6 +250,10 @@ const MAX_SESSOES_PINS = 50
 const MAX_TRECHO = 60
 // O markdown da caixa vai junto no pin para o painel redesenhá-la; o teto segura o tamanho do store.
 export const MAX_TEXTO = 6000
+// O store inteiro aguenta 4 MiB de JSON; os pins ficam com uma fatia, o resto é config e lidas.
+export const ORCAMENTO_PINS = 1.5 * 1024 * 1024
+// Um desenho aguenta 100.000 caracteres: o painel desenha caixas cheias até aqui, o resto em linha.
+export const ORCAMENTO_PAINEL = 80_000
 // Pin antigo não tem texto: o painel cai na linha de título e trecho.
 export type Pin = { id: string; tipo: Tipo; titulo: string; trecho: string; texto?: string; requestId?: string; criado: number }
 type InfoCaixa = { tipo: Tipo; trecho: string; texto: string; requestId?: string }
@@ -228,7 +261,7 @@ type InfoCaixa = { tipo: Tipo; trecho: string; texto: string; requestId?: string
 // Primeira linha com texto da caixa, sem os marcadores do markdown, numa linha curta.
 // O _ fica: some de nome de proc (usp_ww_x) se fosse tirado.
 export function trechoDe(texto: string): string {
-  const linha = texto.split('\n').map(l => l.trim()).find(l => l && !CERCA.test(l)) ?? ''
+  const linha = texto.split('\n').map(l => l.trim()).find(l => l && !abreCerca(l)) ?? ''
   const limpo = linha
     .replace(/^(?:[-*+]|\d+[.)]|#{1,6}|>)\s+/, '')
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -237,6 +270,59 @@ export function trechoDe(texto: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   return limpo.length > MAX_TRECHO ? `${limpo.slice(0, MAX_TRECHO - 1).trimEnd()}…` : limpo
+}
+
+// O markdown que o pin guarda, em até MAX_TEXTO: cortado, termina num "…" que se vê e fecha
+// o bloco de código que o corte deixou aberto, senão o resto do painel viraria código.
+export function textoDoPin(texto: string): string {
+  if (texto.length <= MAX_TEXTO) return texto
+  const ate = (n: number) => {
+    const s = texto.slice(0, n)
+    return /[\uD800-\uDBFF]$/.test(s) ? s.slice(0, -1) : s
+  }
+  let corte = ate(MAX_TEXTO - 1)
+  let aberta = cercaAbertaNoFim(corte)
+  if (aberta) {
+    corte = ate(MAX_TEXTO - 2 - aberta.n)
+    aberta = cercaAbertaNoFim(corte)
+  }
+  return `${corte}…${aberta ? `\n${aberta.char.repeat(aberta.n)}` : ''}`
+}
+
+// Bytes UTF-8, que é o que o teto do store conta, e não caracteres.
+function bytes(s: string): number {
+  let n = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c < 0x80) n += 1
+    else if (c < 0x800) n += 2
+    else if (c >= 0xd800 && c < 0xdc00) { n += 4; i++ }
+    else n += 3
+  }
+  return n
+}
+
+// Passou do orçamento: saem os pins mais velhos, primeiro os das outras sessões, depois os desta.
+export function caberNoOrcamento(todos: Record<string, Pin[]>, sessao: string, orcamento = ORCAMENTO_PINS): Record<string, Pin[]> {
+  let total = bytes(JSON.stringify(todos))
+  if (total <= orcamento) return todos
+  const porIdade = (a: { p: Pin }, b: { p: Pin }) => a.p.criado - b.p.criado
+  const de = (outras: boolean) => Object.entries(todos)
+    .filter(([s]) => (s !== sessao) === outras)
+    .flatMap(([s, lista]) => lista.map(p => ({ s, p })))
+    .sort(porIdade)
+  const sai = new Set<Pin>()
+  for (const { p } of [...de(true), ...de(false)]) {
+    if (total <= orcamento) break
+    sai.add(p)
+    total -= bytes(JSON.stringify(p)) + 1
+  }
+  const ficam: Record<string, Pin[]> = {}
+  for (const [s, lista] of Object.entries(todos)) {
+    const resto = lista.filter(p => !sai.has(p))
+    if (resto.length) ficam[s] = resto
+  }
+  return ficam
 }
 
 function lerTodosPins(v: unknown): Record<string, Pin[]> {
@@ -251,28 +337,41 @@ function lerTodosPins(v: unknown): Record<string, Pin[]> {
   }
   return todos
 }
-async function sessaoAtual($: EngineInterface): Promise<string> {
-  try { return String(await $.session.id()) } catch { return '' }
+// Sem id de sessão não há onde guardar: null, e nunca a chave '' que todas as sessões dividiriam.
+async function sessaoAtual($: EngineInterface): Promise<string | null> {
+  try {
+    const id = String(await $.session.id())
+    return id || null
+  } catch {
+    return null
+  }
 }
 // Depois de um /clear o id muda sem session.start: a cópia em memória confere a sessão a cada leitura.
 let pins: { sessao: string; lista: Pin[] } | null = null
 async function lerPins($: EngineInterface): Promise<Pin[]> {
   const sessao = await sessaoAtual($)
+  if (sessao === null) return []
   if (!pins || pins.sessao !== sessao) pins = { sessao, lista: lerTodosPins(await $.store.get(CHAVE_PINS))[sessao] ?? [] }
   return pins.lista
 }
-async function gravarPins($: EngineInterface, mudar: (lista: Pin[]) => Pin[]) {
+async function gravarPins($: EngineInterface, mudar: (lista: Pin[]) => Pin[]): Promise<boolean> {
   const sessao = await sessaoAtual($)
+  if (sessao === null) {
+    try { $.ui.toast('Boxis: could not save the pins: no session id') } catch {}
+    return false
+  }
   // Relida do disco, como as lidas: o CLI e o app gravam no mesmo arquivo.
-  const todos = lerTodosPins(await $.store.get(CHAVE_PINS))
-  const lista = mudar(todos[sessao] ?? []).slice(-MAX_PINS)
-  delete todos[sessao]
-  if (lista.length) todos[sessao] = lista
-  const sessoes = Object.keys(todos)
-  for (const velha of sessoes.slice(0, Math.max(0, sessoes.length - MAX_SESSOES_PINS))) delete todos[velha]
-  await $.store.set(CHAVE_PINS, todos)
-  pins = { sessao, lista }
+  const lidos = lerTodosPins(await $.store.get(CHAVE_PINS))
+  const lista = mudar(lidos[sessao] ?? []).slice(-MAX_PINS)
+  delete lidos[sessao]
+  if (lista.length) lidos[sessao] = lista
+  const sessoes = Object.keys(lidos)
+  for (const velha of sessoes.slice(0, Math.max(0, sessoes.length - MAX_SESSOES_PINS))) delete lidos[velha]
+  const todos = caberNoOrcamento(lidos, sessao)
+  if (!await gravar($, CHAVE_PINS, todos, 'the pins')) return false
+  pins = { sessao, lista: todos[sessao] ?? [] }
   $.ui.invalidate('ui.render')
+  return true
 }
 
 // O que o pin precisa de cada caixa desenhada: o título do Client só posta o id dela.
@@ -291,33 +390,36 @@ function lembrar<V>(mapa: Map<string, V>, chave: string, valor: V) {
 async function abrirPins($: EngineInterface, focus: boolean) {
   await $.ui.open({ id: PAINEL_PINS, title: 'Pins', closeOnEscape: true, ...(focus ? { focus: true } : {}) })
 }
-async function alternarPin($: EngineInterface, id: string, info?: InfoCaixa) {
+// Fixa (on) ou solta: o estado pedido, como as marcas, para o clique não desfazer o do outro processo.
+async function fixarPin($: EngineInterface, id: string, on: boolean, info?: InfoCaixa) {
   let fixou = false
   const criado = await $.clock.now()
-  await gravarPins($, lista => {
-    if (lista.some(p => p.id === id)) return lista.filter(p => p.id !== id)
+  const gravou = await gravarPins($, lista => {
+    const tem = lista.some(p => p.id === id)
+    if (!on) return tem ? lista.filter(p => p.id !== id) : lista
     const c = info ?? caixasVistas.get(id)
-    if (!c) return lista
+    if (tem || !c) return lista
     fixou = true
-    return [...lista, { id, tipo: c.tipo, titulo: BASE[c.tipo].titulo ?? 'answer', trecho: c.trecho, texto: c.texto.slice(0, MAX_TEXTO), ...(c.requestId ? { requestId: c.requestId } : {}), criado }]
+    return [...lista, { id, tipo: c.tipo, titulo: BASE[c.tipo].titulo ?? 'answer', trecho: c.trecho, texto: textoDoPin(c.texto), ...(c.requestId ? { requestId: c.requestId } : {}), criado }]
   })
-  if (fixou) await abrirPins($, false)
+  if (gravou && fixou) await abrirPins($, false)
 }
-const alvoDa = (id: string) => `alvo-${id}`
-// Para onde o clique no pin rola: a marca da caixa e, de reserva, a resposta pelo último requestId visto.
-export function destinoDo(p: Pin): { key: string; requestId?: string } {
-  const requestId = pedidos.get(p.id.slice(0, p.id.lastIndexOf(':'))) ?? p.requestId
-  return requestId ? { key: alvoDa(p.id), requestId } : { key: alvoDa(p.id) }
+// A resposta para onde o clique no pin rola: o último requestId visto dela, ou o guardado no pin.
+export function destinoDo(p: Pin): string | undefined {
+  return pedidos.get(p.id.slice(0, p.id.lastIndexOf(':'))) ?? p.requestId
 }
 // O motor pode recusar ({ deny }) ou rejeitar (sem superfície que role): os dois viram o motivo.
 async function rolar($: EngineInterface, args: UiScrollArgs): Promise<string | undefined> {
   try { return (await $.ui.scroll(args)).deny } catch (erro) { return erro instanceof Error ? erro.message : String(erro) }
 }
 async function irPara($: EngineInterface, p: Pin) {
-  const { key, requestId } = destinoDo(p)
-  // Uma chamada só por clique: a segunda, depois do await, já não conta como gesto da pessoa
-  // ("not person-initiated"). A marca da caixa não é alvo no transcript; a resposta pelo requestId é.
-  const deny = await rolar($, requestId ? { to: { requestId }, block: 'start' } : { to: { key }, block: 'center' })
+  const requestId = destinoDo(p)
+  if (!requestId) {
+    $.ui.toast('Could not jump to the box: its answer was not drawn in this session')
+    return
+  }
+  // Uma chamada só por clique: a segunda, depois do await, já não conta como gesto da pessoa.
+  const deny = await rolar($, { to: { requestId }, block: 'start' })
   if (deny) $.ui.toast(`Could not jump to the box: ${deny}`)
 }
 
@@ -373,22 +475,24 @@ async function desenhar($: EngineInterface, p: Pintura, texto: string, tipo: Tip
 
 const TIPOS_DESC = TIPOS.map(nomeDoTipo).join(', ')
 
-// Rótulo do botão de animação no painel.
-const ROTULO = ROTULO_ANIMACAO
+// Títulos do Client que falharam (ui.fault), por resposta e caixa: esses voltam à linha de título comum.
+const titulosFalhos = new Map<string, true>()
+const falhaDe = (requestId: string, element: string) => `${requestId} ${element}`
+export const tituloFalhou = (requestId: string, element: string) => titulosFalhos.has(falhaDe(requestId, element))
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | pins | on | off | check on|off | animation none|clock|client|svg | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
+    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | pins | on | off | check on|off | animation none|clock|client | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
     await $.tool.register({
       name: 'design',
-      description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (ligado), the ✓ button that marks a box as understood (check), the animation of the boxes on arrival (animacao: none (nenhuma), clock (relogio), client, svg), background intensity (intensidade, 0 to 100) and, per type, the border and title colour (cor) and the background colour (fundo). Types: ${TIPOS_DESC}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
+      description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (ligado), the ✓ button that marks a box as understood (check), the animation of the boxes on arrival (animacao: none (nenhuma), clock (relogio), client), background intensity (intensidade, 0 to 100) and, per type, the border and title colour (cor) and the background colour (fundo). Types: ${TIPOS_DESC}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
       inputSchema: {
         type: 'object',
         properties: {
           ligado: { type: 'boolean', description: 'Boxes on (true) or off (false).' },
           check: { type: 'boolean', description: 'Shows the ✓ button that marks a box as understood.' },
-          animacao: { type: 'string', enum: ['nenhuma', 'relogio', 'client', 'svg'], description: 'Animation of the warning and decision boxes when the answer arrives: none (nenhuma), clock (relogio), client, svg.' },
+          animacao: { type: 'string', enum: ['nenhuma', 'relogio', 'client'], description: 'Animation of the warning and decision boxes when the answer arrives: none (nenhuma), clock (relogio), client.' },
           intensidade: { type: 'number', minimum: 0, maximum: 100, description: 'Background intensity, 0 (no background) to 100 (strong background).' },
           tipos: {
             type: 'object',
@@ -435,6 +539,8 @@ export const register: Register = on => {
     const r = await mudar($, (e.input ?? {}) as Mudanca)
     return r.erro ? { deny: r.texto } : { result: r.texto }
   })
+    // Falhar aqui não pode virar "feito": o modelo recebe a recusa e o motivo.
+    .catch(($, e, next) => ({ deny: `Boxis could not change the config: ${next.error.message ?? next.error.kind}` }))
 
   // O turno do loop principal: o que a tela desenha dentro dele é a resposta chegando.
   on('turn.start', ($, e, next) => {
@@ -470,25 +576,33 @@ export const register: Register = on => {
 
   // O check do título (animação "client") posta "fechar" no clique e "lida" ao fim dos quadros.
   on('ui.message', async ($, e, next) => {
-    const dados = e.data as { lida?: unknown; fechar?: unknown; todas?: unknown; pin?: unknown } | null
+    const dados = e.data as { lida?: unknown; fechar?: unknown; todas?: unknown; pin?: unknown; on?: unknown } | null
     if (!e.element.startsWith('titulo-') || !dados || typeof dados !== 'object') return next(e)
     if (dados.todas === true) { await marcarTodas($); return {} }
+    if (typeof dados.fechar === 'string') { fechar($, dados.fechar); return {} }
+    // Pin e marca chegam com o estado pedido; sem o on, é dado torto e passa adiante.
+    if (typeof dados.on !== 'boolean') return next(e)
     if (typeof dados.pin === 'string') {
       const c = caixasVistas.get(dados.pin)
-      await alternarPin($, dados.pin, c && { ...c, requestId: e.requestId })
+      await fixarPin($, dados.pin, dados.on, c && { ...c, requestId: e.requestId })
       return {}
     }
-    if (typeof dados.fechar === 'string') { fechar($, dados.fechar); return {} }
     if (typeof dados.lida !== 'string') return next(e)
-    await alternarLida($, dados.lida)
+    await marcar($, [dados.lida], dados.on)
     return {}
+  })
+
+  // Título do Client que falhou: o motor redesenha a resposta sozinho, e ela sai com a linha comum.
+  on('ui.fault', ($, e, next) => {
+    if (e.element.startsWith('titulo-')) lembrar(titulosFalhos, falhaDe(e.requestId, e.element), true as const)
+    return next(e)
   })
 
   // O painel de config: uma linha por tipo, com a amostra e os botões de cor e fundo.
   on('ui.render', { component: 'Pane', requestId: PAINEL }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const cfg = await atual($)
-    const ir = (m: Mudanca) => () => void mudar($, m)
+    const ir = (m: Mudanca) => () => tentar($, mudar($, m), 'the config')
     const linha = (t: Tipo) => {
       const v = visual(cfg, t)
       const nome = nomeDoTipo(t)
@@ -517,7 +631,7 @@ export const register: Register = on => {
           <Button key="int-mais" label="+" onPress={ir({ intensidade: Math.min(100, cfg.intensidade + 10) })} />
           <Button key="tela" label={cfg.claro ? 'light screen' : 'dark screen'} onPress={ir({ claro: !cfg.claro })} />
           <Button key="check" label={cfg.check ? 'check on' : 'check off'} onPress={ir({ check: !cfg.check })} />
-          <Button key="animacao" label={`animation: ${ROTULO[cfg.animacao]}`} onPress={ir({ animacao: proximaAnimacao(cfg.animacao) })} />
+          <Button key="animacao" label={`animation: ${ROTULO_ANIMACAO[cfg.animacao]}`} onPress={ir({ animacao: proximaAnimacao(cfg.animacao) })} />
         </Box>
         {TIPOS.map(linha)}
         <Box flexDirection="row" gap={1}>
@@ -542,7 +656,7 @@ export const register: Register = on => {
       </Button>
     )
     const soltar = (p: Pin) => (
-      <Button key={`soltar-${p.id}`} label="×" onPress={() => void alternarPin($, p.id)}>
+      <Button key={`soltar-${p.id}`} label="×" onPress={() => tentar($, fixarPin($, p.id, false), 'the pins')}>
         <Text dimColor>×</Text>
       </Button>
     )
@@ -582,8 +696,17 @@ export const register: Register = on => {
         </Box>
       )
     }
+    // Caixas cheias do mais novo para trás, até o orçamento; as mais velhas viram linha. A ordem fica.
+    const cheias = new Set<Pin>()
+    let gasto = 0
+    for (const p of [...lista].reverse()) {
+      if (typeof p.texto !== 'string') continue
+      if (gasto + p.texto.length > ORCAMENTO_PAINEL) break
+      gasto += p.texto.length
+      cheias.add(p)
+    }
     const desenhos = []
-    for (const p of lista) desenhos.push(typeof p.texto === 'string' ? await caixa(p as Pin & { texto: string }) : linha(p))
+    for (const p of lista) desenhos.push(cheias.has(p) ? await caixa(p as Pin & { texto: string }) : linha(p))
     return (
       <Box flexDirection="column" rowGap={e.surface === 'terminal' ? 0 : 1}>
         {lista.length === 0 ? <Text dimColor>{`No pins yet. Use ${PIN.solta} on a box to pin it.`}</Text> : desenhos}
@@ -609,7 +732,8 @@ export const register: Register = on => {
     const lida = (i: number) => cfg.check && marcadas.includes(idDa(i))
     const pedacos = e.props.text.length > MAX_CORTE ? null : cortar(e.props.text)
     const caixasDesta = pedacos === null || pedacos.length <= 1 && (pedacos[0]?.tipo ?? 'corpo') === 'corpo' ? 1 : pedacos.length
-    verDesenhada(id, caixasDesta)
+    // Dentro do turno o texto ainda chega aos pedaços: cada tamanho seria uma resposta para o "all".
+    if (!emTurno) verDesenhada(id, caixasDesta)
     lembrar(pedidos, id, e.requestId)
     const fixadas = new Set((await lerPins($)).map(p => p.id))
     // O botão "marcar todas" fica na última caixa da última resposta, ao lado do check dela.
@@ -623,7 +747,7 @@ export const register: Register = on => {
       lembrar(caixasVistas, idDa(i), info)
       const fixada = fixadas.has(idDa(i))
       const pin = (
-        <Button key={`pin-${i}`} label={fixada ? PIN.fixada : PIN.solta} onPress={() => void alternarPin($, idDa(i), info)}>
+        <Button key={`pin-${i}`} label={fixada ? PIN.fixada : PIN.solta} onPress={() => tentar($, fixarPin($, idDa(i), !fixada, info), 'the pins')}>
           {fixada ? <Text>{PIN.fixada}</Text> : <Text dimColor>{PIN.solta}</Text>}
         </Button>
       )
@@ -637,7 +761,7 @@ export const register: Register = on => {
           // A borda engrossa sem mudar de tamanho; a que já é grossa vira dupla.
           borda: v.borda === 'bold' ? 'double' : 'bold',
         } : v
-      const noCliente = cfg.check && cfg.animacao === 'client' && Client
+      const noCliente = cfg.check && cfg.animacao === 'client' && Client && !tituloFalhou(e.requestId, `titulo-${i}`)
       const fecha = noCliente && fechando.has(idDa(i))
       const aceso = fecha && fechando.get(idDa(i)) === true
       const c = fecha ? {
@@ -659,8 +783,6 @@ export const register: Register = on => {
       return (
         <Box key={`caixa-${i}`} flexDirection="column" borderStyle={c.borda} borderColor={bordaCor} backgroundColor={c.fundo}
           paddingX={ESPACO_X} paddingY={leve ? 0 : ESPACO_Y}>
-          {/* Marca vazia para o painel de pins rolar até esta caixa, e não só até o topo da resposta. */}
-          <Box key={alvoDa(idDa(i))} height={0} />
           {noCliente ? (
             <Client key={`titulo-${i}`} module="./titulo.tsx" width="100%" height={1} props={{
               titulo: c.titulo ?? '',
@@ -681,12 +803,12 @@ export const register: Register = on => {
               <Box flexDirection="row" gap={1} flexShrink={0}>
                 {pin}
                 {todas(i) ? (
-                  <Button key={`todas-${i}`} label="all" onPress={() => void marcarTodas($)}>
+                  <Button key={`todas-${i}`} label="all" onPress={() => tentar($, marcarTodas($), 'the check marks')}>
                     <Text dimColor>all</Text>
                   </Button>
                 ) : null}
                 {cfg.check ? (
-                  <Button key={`lida-${i}`} label={marcada ? '✓' : '○'} onPress={() => void alternarLida($, idDa(i))}>
+                  <Button key={`lida-${i}`} label={marcada ? '✓' : '○'} onPress={() => tentar($, marcar($, [idDa(i)], !marcada), 'the check marks')}>
                     <Text color={marcada ? VERDE : undefined} bold={marcada} dimColor={!marcada}>{marcada ? '✓' : '○'}</Text>
                   </Button>
                 ) : null}
@@ -717,7 +839,7 @@ export const register: Register = on => {
     // no tema do Skins quando ele está ligado.
     let baixoLivre = true
     const trecho = async (texto: string) => {
-      if (!baixoLivre || !CERCA.test(texto)) return solto($, pintura, texto)
+      if (!baixoLivre || !temCerca(texto)) return solto($, pintura, texto)
       baixoLivre = false
       return (await next({ ...e, props: { ...e.props, text: texto } })) ?? solto($, pintura, texto)
     }
@@ -743,9 +865,8 @@ export const register: Register = on => {
     return <Box flexDirection="column" rowGap={e.surface === 'terminal' ? 0 : 1}>{caixas}</Box>
   })
     // Se o desenho acima falhar (erro, estouro de tempo), a resposta ainda sai numa caixa só,
-    // com o markdown cru por dentro. Numa reentrada o `$` não responde: passa adiante.
-    .catch(async ($, e, next) => {
-      if (next.error.kind === 're-entry') return next(e)
+    // com o markdown cru por dentro.
+    .catch(async ($, e) => {
       try {
         const cfg = await atual($)
         const { Box, Markdown } = $.ui.resolve(e)

@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 import { TELA, lerConfig, misturar, visual } from '../hooks/config'
 import { ACENDER, BATIDA_MS, CLAREAR, FECHAR_MS, PISCADAS, PISCA_MS, PULSOS } from '../hooks/register'
 import { colunaDa, glifo } from '../hooks/brilho'
-import { BATIDA_PONTO_MS, PULSOS as PULSOS_PONTO, QUADROS_CHECK, QUADROS_PONTO, QUADRO_MS } from '../hooks/titulo'
+import { BATIDA_PONTO_MS, PULSOS_PONTO, QUADROS_CHECK, QUADROS_PONTO, QUADRO_MS } from '../hooks/titulo'
 
 const RESPOSTA = { component: 'AssistantMessage', props: { text: 'oi', isFirstOfReply: true } } as const
 
@@ -237,8 +237,9 @@ test('relógio: caixa marcada como entendida fica verde e parada no meio do puls
   await ui.unmount()
 })
 
+// 'svg' saiu: a guardada lê como nenhuma.
 for (const animacao of ['nenhuma', 'svg']) {
-  test(`animação ${animacao}: o fim do turno só redesenha uma vez (o "marcar todas" muda de resposta), nada pulsa`, async ($, on) => {
+  test(`animação ${animacao === 'svg' ? 'svg guardada (lê como nenhuma)' : animacao}: o fim do turno só redesenha uma vez (o "marcar todas" muda de resposta), nada pulsa`, async ($, on) => {
     const { clock, contagem } = mundoDoPulso(on, { animacao })
     const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text: PULSANDO, isFirstOfReply: true } })
     const antes = contagem.desenhos
@@ -488,17 +489,18 @@ test('client: clique na caixa marcada desmarca sem quadros, e o ✓ velho não v
   await ui.unmount()
 })
 
-test('client: ui.message com lida alterna a marca e ela persiste; dado torto não mexe em nada', async ($, on) => {
+test('client: ui.message com lida e on marca e ela persiste; dado torto não mexe em nada', async ($, on) => {
   mundoDoPulso(on, { animacao: 'client' })
   const ui = await montarClient($)
   const chave = (await clientes(ui))[2].chave
-  await ui.post({ lida: chave }, { in: 'titulo-2' })
+  await ui.post({ lida: chave, on: true }, { in: 'titulo-2' })
   expect((await clientes(ui))[2].marcada).toBe(true)
   expect(await bordasDe(ui)).toEqual(['#7F77DD', '#E0B040', '#5CB85C', '#5CB85C'])
   await ui.unmount()
   const reaberta = await montarClient($)
   expect((await clientes(reaberta))[2].marcada).toBe(true)
-  for (const data of [{ lida: 1 }, { outra: chave }, 'lida', null]) await reaberta.post(data, { in: 'titulo-2' })
+  // Sem o estado pedido (on) é dado torto: nada de alternar.
+  for (const data of [{ lida: 1, on: false }, { lida: chave }, { lida: chave, on: 'no' }, { outra: chave }, 'lida', null]) await reaberta.post(data, { in: 'titulo-2' })
   expect((await clientes(reaberta))[2].marcada).toBe(true)
   await reaberta.unmount()
 })

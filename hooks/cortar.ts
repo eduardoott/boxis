@@ -1,9 +1,11 @@
 // Corta a resposta em pedaços pelo emoji do começo da linha (fase 2 do plano-caixinhas.md).
 // Função pura: não desenha nada, só diz que pedaço é de que tipo.
 
+import { abreCerca, fechaCerca, type Cerca } from './cerca'
+
 export type Tipo = 'corpo' | 'decisao' | 'sobreVoce' | 'aviso' | 'escopo' | 'documento' | 'objeto' | 'teste' | 'fechamento'
 
-export type Pedaco = { tipo: Tipo; texto: string }
+type Pedaco = { tipo: Tipo; texto: string }
 
 // Ordem importa: "❓ About you:" (ou o antigo "Sobre você:") antes de "❓".
 const INICIOS: [RegExp, Tipo][] = [
@@ -17,7 +19,6 @@ const INICIOS: [RegExp, Tipo][] = [
   [/^✅\s*/u, 'fechamento'],
 ]
 
-const CERCA = /^\s*(```|~~~)/
 const PASSO = /^\s*\d+[.)]\s/
 const RECUADA = /^\s+\S/
 
@@ -33,7 +34,7 @@ export function cortar(texto: string): Pedaco[] {
   const pedacos: Pedaco[] = []
   let atual: { tipo: Tipo; linhas: string[] } | null = null
   let brancas: string[] = []
-  let cerca: string | null = null
+  let cerca: Cerca | null = null
 
   const fechar = () => {
     if (atual) {
@@ -58,19 +59,19 @@ export function cortar(texto: string): Pedaco[] {
     if (cerca) {
       atual!.linhas.push(...brancas, linha)
       brancas = []
-      if (linha.trim().startsWith(cerca)) cerca = null
+      if (fechaCerca(linha, cerca)) cerca = null
       continue
     }
     if (linha.trim() === '') {
       brancas.push(linha)
       continue
     }
-    const abre = CERCA.exec(linha)
+    const abre = abreCerca(linha)
     if (abre) {
       // Bloco recuado dentro de um passo de teste fica no teste; o resto é corpo.
       const tipo: Tipo = atual?.tipo === 'teste' && RECUADA.test(linha) ? 'teste' : 'corpo'
       por(tipo, linha)
-      cerca = abre[1]
+      cerca = abre
       continue
     }
     const achou = tipoDaLinha(linha)

@@ -112,9 +112,9 @@ test('clique no pin tenta rolar até a caixa marcada, e a recusa vira toast', as
   await ao_vivo.unmount()
   const pin = pins()[0]!
   expect(pin.requestId).toBe('msg_011Cg')
-  // Reaberta, a mesma resposta ganha outro requestId; a marca da caixa tem o mesmo nome.
+  // Reaberta, a mesma resposta ganha outro requestId; a caixa não tem mais marca própria para rolar.
   const reaberta = await montar($, 'desktop', 'b755fbd8-uuid')
-  expect(await reaberta.find({ type: 'Box', key: `alvo-${pin.id}` } as never)).toBeDefined()
+  expect(await reaberta.find({ type: 'Box', key: `alvo-${pin.id}` } as never)).toBeUndefined()
   // O kit de teste não rola o transcript: a recusa sai num toast, sem rejeição solta.
   const painel = await $.ui.mount({ ...PAINEL, surface: 'desktop' } as never)
   await painel.press({ key: `ir-${pin.id}` })
@@ -138,10 +138,10 @@ test('client: o título traz o pin, o clique posta { pin } e o hook fixa e abre 
   expect(abertos.map(a => a.id)).toEqual(['boxis-pins'])
   const depois = (await ui.findAll({ type: 'Client' })).filter((c: any) => c.key.startsWith('titulo-')).map((c: any) => c.props.props)
   expect(depois.map((p: any) => p.fixada)).toEqual([false, true, false])
-  // Post direto com o id desfaz; dado torto não mexe.
-  for (const data of [{ pin: 1 }, { outra: props[1].chave }, null]) await ui.post(data, { in: 'titulo-1' })
+  // Post com on: false solta; dado torto (sem on, que alternaria) não mexe.
+  for (const data of [{ pin: 1, on: false }, { pin: props[1].chave }, { outra: props[1].chave }, null]) await ui.post(data, { in: 'titulo-1' })
   expect(pins().length).toBe(1)
-  await ui.post({ pin: props[1].chave }, { in: 'titulo-1' })
+  await ui.post({ pin: props[1].chave, on: false }, { in: 'titulo-1' })
   expect(pins()).toEqual([])
   await ui.unmount()
 })
@@ -157,13 +157,13 @@ test('/boxis pins abre o painel de pins com o foco', async ($, on) => {
   expect(abertos).toEqual([{ id: 'boxis-pins', title: 'Pins', closeOnEscape: true, focus: true }])
 })
 
-test('fixar guarda o markdown da caixa em texto, com teto de 6000', async ($, on) => {
+test('fixar guarda o markdown da caixa em texto, com teto de 6000 e um … visível no corte', async ($, on) => {
   const { pins } = mundo(on)
   const longo = `Corpo.\n\n⚠️ ${'a'.repeat(7000)}\n\n✅ Feito: x.`
   const ui = await montar($, 'desktop', 'msg-1', longo)
   await ui.press({ key: 'pin-1' })
   expect(MAX_TEXTO).toBe(6000)
-  expect(pins()[0]!.texto).toBe('a'.repeat(6000))
+  expect(pins()[0]!.texto).toBe(`${'a'.repeat(5999)}…`)
   await ui.unmount()
 })
 
@@ -216,7 +216,7 @@ test('↗ chama o $.ui.scroll uma vez, pelo requestId guardado, e × solta o pin
   await msg.press({ key: 'pin-1' })
   const pin = pins()[0]!
   // O alvo que o ↗ passa ao scroll: a resposta pelo requestId que a caixa tinha ao ser fixada.
-  expect(destinoDo(pin)).toEqual({ key: `alvo-${pin.id}`, requestId: 'msg_guardado' })
+  expect(destinoDo(pin)).toBe('msg_guardado')
   const painel = await $.ui.mount({ ...PAINEL, surface: 'desktop' } as never)
   // O kit não implementa o scroll do transcript nem deixa trocá-lo: cada chamada vira um toast de recusa.
   await painel.press({ key: `ir-${pin.id}` })

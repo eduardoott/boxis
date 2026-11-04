@@ -14,19 +14,21 @@ const NOMES: Record<string, Tipo> = {
   documento: 'documento', objeto: 'objeto', teste: 'teste', fechamento: 'fechamento',
   'sobre-voce': 'sobreVoce', 'sobre-você': 'sobreVoce', sobrevoce: 'sobreVoce', 'sobrevocê': 'sobreVoce', sobreVoce: 'sobreVoce',
 }
-export const tipoDoNome = (nome: string): Tipo | undefined => NOMES[nome.trim()] ?? NOMES[nome.trim().toLowerCase()]
+// hasOwn: "constructor" e outras chaves do protótipo não são tipo.
+const doNome = (k: string): Tipo | undefined => Object.hasOwn(NOMES, k) ? NOMES[k] : undefined
+export const tipoDoNome = (nome: string): Tipo | undefined => doNome(nome.trim()) ?? doNome(nome.trim().toLowerCase())
 const NOME_INGLES: Record<Tipo, string> = {
   corpo: 'body', decisao: 'decision', aviso: 'warning', escopo: 'scope', documento: 'document',
   objeto: 'object', teste: 'test', fechamento: 'wrap-up', sobreVoce: 'about-you',
 }
 export const nomeDoTipo = (t: Tipo) => NOME_INGLES[t]
 
-export type Ajuste = { cor?: string; fundo?: string | 'nenhum' }
+type Ajuste = { cor?: string; fundo?: string | 'nenhum' }
 // Animação das caixas ao chegar (exploração). A ordem é a que o botão do painel roda.
-export type Animacao = 'nenhuma' | 'relogio' | 'client' | 'svg'
-export const ANIMACOES: Animacao[] = ['nenhuma', 'relogio', 'client', 'svg']
+type Animacao = 'nenhuma' | 'relogio' | 'client'
+const ANIMACOES: Animacao[] = ['nenhuma', 'relogio', 'client']
 // Nome que a pessoa vê e digita para cada animação; o valor guardado continua em português.
-export const ROTULO_ANIMACAO: Record<Animacao, string> = { nenhuma: 'none', relogio: 'clock', client: 'client', svg: 'svg' }
+export const ROTULO_ANIMACAO: Record<Animacao, string> = { nenhuma: 'none', relogio: 'clock', client: 'client' }
 const ANIMACAO_DO_NOME: Record<string, Animacao> = { none: 'nenhuma', clock: 'relogio' }
 export function proximaAnimacao(a: Animacao): Animacao {
   const i = ANIMACOES.indexOf(a)
@@ -69,7 +71,7 @@ export const BASE: Record<Tipo, { cor: string; borda: string; titulo?: string; s
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/
-export const ehCor = (s: unknown): s is string => typeof s === 'string' && HEX.test(s)
+const ehCor = (s: unknown): s is string => typeof s === 'string' && HEX.test(s)
 
 // O fundo nasce da cor da borda misturada no fundo da tela; a intensidade diz quanto.
 export function misturar(a: string, b: string, k: number): string {
@@ -103,7 +105,7 @@ export function lerConfig(v: unknown): Config {
     if (aj.cor || aj.fundo) tipos[tipo] = aj
   }
   const i = typeof o.intensidade === 'number' ? Math.round(o.intensidade) : PADRAO.intensidade
-  // Config antiga sem o campo, ou valor torto: sem animação.
+  // Config antiga sem o campo, valor torto ou o 'svg' que saiu: sem animação.
   const animacao = ANIMACOES.includes(o.animacao as Animacao) ? o.animacao as Animacao : PADRAO.animacao
   return { ligado: o.ligado !== false, intensidade: Math.max(0, Math.min(100, i)), claro: o.claro === true, check: o.check !== false, animacao, tipos }
 }
@@ -133,7 +135,7 @@ export function aplicar(cfg: Config, m: Mudanca): { cfg: Config } | { erro: stri
     // Aceita o nome em inglês e o antigo, com e sem acento (relógio vira relogio), em qualquer caixa.
     const digitado = String(m.animacao).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     const a = ANIMACAO_DO_NOME[digitado] ?? digitado
-    if (!ANIMACOES.includes(a as Animacao)) return { erro: 'animation: none, clock, client or svg.' }
+    if (!ANIMACOES.includes(a as Animacao)) return { erro: 'animation: none, clock or client.' }
     novo.animacao = a as Animacao
   }
   if (m.intensidade !== undefined) {
@@ -179,7 +181,7 @@ export const AJUDA = [
   '/boxis on | off                       turns the boxes on or off',
   '/boxis screen light | dark            backgrounds for a light or a dark screen',
   '/boxis check on | off                 ✓ button to mark a box as understood',
-  '/boxis animation <value>              animation on arrival: none, clock, client, svg',
+  '/boxis animation <value>              animation on arrival: none, clock, client',
   '/boxis intensity 0-100                how much colour goes into the background (0 = no background)',
   '/boxis color <type> #RRGGBB           border and title colour (default restores the original)',
   '/boxis background <type> #RRGGBB      fixed background (none removes it, default restores the automatic one)',

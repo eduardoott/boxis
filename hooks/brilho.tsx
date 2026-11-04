@@ -15,7 +15,7 @@ export type BrilhoProps = {
   duracaoMs: number
 }
 
-export const TICK_MS = 35
+const TICK_MS = 35
 
 const GLIFOS: Record<string, { cantos: string; h: string }> = {
   round: { cantos: '╭╮╰╯', h: '─' },
