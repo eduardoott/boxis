@@ -25,9 +25,10 @@ Boxis splits an answer by the start of its lines. A line that starts with one of
 | `📄` | document | documents |
 | `📌` | object | to apply |
 | `🧪 Test:` or `🧪 Testar:`, then numbered or indented steps | test | test for you |
-| `✅`, as in `✅ Done: ... ➡️ Next: ...` or `✅ Feito: ... ➡️ Planejado: ...` | wrap-up | wrap-up |
+| `✅ Done:` or `✅ Feito:`, as in `✅ Done: ... ➡️ Next: ...` | wrap-up | wrap-up |
+| `## subject` or `### subject` | body | the subject |
 
-Everything else is body text, in a purple box. An answer with none of these prefixes is one plain box. Code blocks never split, and an answer over 9000 characters stays in one box.
+A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without the colon or a bare `✅ passed` is body text. Everything else is body text, in a purple box with no title. A heading starts a new body box titled with its subject, so an answer that covers several subjects gives one box per subject. An answer with none of these prefixes is one plain box. Code blocks never split, and an answer over 9000 characters stays in one box.
 
 ## Commands and the colour pane
 
@@ -55,7 +56,7 @@ Each box has a ○ on its title line. Clicking it marks the box as understood: i
 
 ## Pins
 
-The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it.
+The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so this is what keeps the store from filling up.
 
 In the terminal, ↗ on a pin jumps back to that box in the chat. Jumping works only in the terminal: the desktop app does not support it yet, so there the pane shows the boxes with × alone.
 

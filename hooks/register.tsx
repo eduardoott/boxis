@@ -120,6 +120,8 @@ async function check($: EngineInterface, ids: string[], on: boolean) {
   const others = (await readChecked($, true)).filter(x => !these.has(x))
   const next = (on ? [...others, ...these] : others).slice(-MAX_CHECKED)
   if (!await save($, CHECKED_KEY, next, 'the check marks')) return
+  // The marks now live under CHECKED_KEY: the old key is only garbage.
+  try { await $.store.delete(LEGACY_CHECKED_KEY) } catch {}
   checked = next
   $.ui.invalidate('ui.render')
 }
@@ -256,7 +258,7 @@ export const PINS_BUDGET = 1.5 * 1024 * 1024
 export const PANE_BUDGET = 80_000
 // A pin saved before text was kept has none: the pane falls back to the title and excerpt row.
 export type Pin = { id: string; type: BoxType; title: string; excerpt: string; text?: string; requestId?: string; created: number }
-type BoxInfo = { type: BoxType; excerpt: string; text: string; requestId?: string }
+type BoxInfo = { type: BoxType; excerpt: string; text: string; requestId?: string; title?: string }
 
 // The first line of the box with text, without markdown markers, on one short line.
 // The _ stays: it would vanish from proc names (usp_x_y) if stripped.
@@ -300,6 +302,18 @@ function bytes(s: string): number {
     else n += 3
   }
   return n
+}
+
+// Pins older than this go on the next write, from any session: a session that was archived or
+// deleted never tells the mod, so its pins would otherwise stay until the byte budget pushed them out.
+export const PIN_TTL_MS = 30 * 24 * 60 * 60 * 1000
+export function dropExpired(all: Record<string, Pin[]>, now: number): Record<string, Pin[]> {
+  const kept: Record<string, Pin[]> = {}
+  for (const [s, list] of Object.entries(all)) {
+    const rest = list.filter(p => now - p.created < PIN_TTL_MS)
+    if (rest.length) kept[s] = rest
+  }
+  return kept
 }
 
 // Over the budget: the oldest pins go, first those of other sessions, then those of this one.
@@ -381,7 +395,7 @@ async function savePins($: EngineInterface, edit: (list: Pin[]) => Pin[]): Promi
     return false
   }
   // Read from disk again, like the check marks: the CLI and the app write the same file.
-  const read = readAllPins(await $.store.get(PINS_KEY))
+  const read = dropExpired(readAllPins(await $.store.get(PINS_KEY)), await $.clock.now())
   const list = edit(read[session] ?? [])
   delete read[session]
   if (list.length) read[session] = list
@@ -425,7 +439,7 @@ async function setPin($: EngineInterface, id: string, on: boolean, info?: BoxInf
     // At the limit the oldest pins of this session go first, so the new one fits.
     const kept = [...list]
     dropped = kept.splice(0, Math.max(0, kept.length + 1 - limit))
-    return [...kept, { id, type: c.type, title: BASE[c.type].title ?? 'answer', excerpt: c.excerpt, text: pinText(c.text), ...(c.requestId ? { requestId: c.requestId } : {}), created }]
+    return [...kept, { id, type: c.type, title: c.title ?? BASE[c.type].title ?? 'answer', excerpt: c.excerpt, text: pinText(c.text), ...(c.requestId ? { requestId: c.requestId } : {}), created }]
   })
   if (saved && dropped.length) {
     const which = dropped.map(p => `${p.title} "${p.excerpt}"`).join('; ')
@@ -708,7 +722,8 @@ export const register: Register = on => {
       </Box>
     )
     const box = async (p: Pin & { text: string }) => {
-      const v = style(cfg, p.type)
+      // A body pin keeps the subject of its heading; 'answer' is the old stand-in for no title.
+      const v = { ...style(cfg, p.type), ...(p.type === 'body' && p.title !== 'answer' ? { title: p.title } : {}) }
       const marked = cfg.check && marks.includes(p.id)
       const c = marked ? { ...v, color: GREEN, background: mix(cfg.light ? SCREEN.light : SCREEN.dark, GREEN, 0.2) } : v
       const faint = p.type === 'about-you'
@@ -765,7 +780,8 @@ export const register: Register = on => {
     const idOf = (i: number) => `${id}:${i}`
     const isChecked = (i: number) => cfg.check && marks.includes(idOf(i))
     const pieces = e.props.text.length > MAX_SPLIT ? null : split(e.props.text)
-    const boxCount = pieces === null || pieces.length <= 1 && (pieces[0]?.type ?? 'body') === 'body' ? 1 : pieces.length
+    const single = pieces === null || pieces.length <= 1 && (pieces[0]?.type ?? 'body') === 'body' && !pieces[0]?.title
+    const boxCount = single ? 1 : pieces.length
     // Inside the turn the text still arrives in chunks: each length would be a separate answer for "all".
     if (!inTurn) seeDrawn(id, boxCount)
     remember(requests, id, e.requestId)
@@ -775,9 +791,10 @@ export const register: Register = on => {
     const allOn = (i: number) => last && i === boxCount - 1
     const columns = columnsOf(e.viewport)
 
-    const box = (type: BoxType, inside: unknown, i: number, text: string) => {
-      const v = style(cfg, type)
-      const info: BoxInfo = { type, excerpt: excerptOf(text), text, requestId: e.requestId }
+    // title: the subject of a body box opened by a heading; the other types keep their own.
+    const box = (type: BoxType, inside: unknown, i: number, text: string, subject?: string) => {
+      const v = { ...style(cfg, type), ...(subject ? { title: subject } : {}) }
+      const info: BoxInfo = { type, excerpt: excerptOf(text), text, requestId: e.requestId, ...(subject ? { title: subject } : {}) }
       remember(seenBoxes, idOf(i), info)
       const isPinned = pinned.has(idOf(i))
       const pin = (
@@ -881,7 +898,7 @@ export const register: Register = on => {
 
     // No slot at all (or too large): a single body box.
     // A box checked as understood: the text comes out dimmed and struck, with all its formatting.
-    if (pieces === null || pieces.length <= 1 && (pieces[0]?.type ?? 'body') === 'body') {
+    if (single) {
       if (isChecked(0)) return box('body', <Markdown text={strike(e.props.text)} dimColor />, 0, e.props.text)
       if (pieces && hasTable(e.props.text)) return box('body', await drawHere(e.props.text, 'body'), 0, e.props.text)
       const inside = await next(e)
@@ -894,7 +911,7 @@ export const register: Register = on => {
       const inside = p.type === 'about-you' ? <Text dimColor>{p.text}</Text>
         : isChecked(i) ? <Markdown text={strike(p.text)} dimColor />
         : await drawHere(p.text, p.type)
-      boxes.push(box(p.type, inside, i, p.text))
+      boxes.push(box(p.type, inside, i, p.text, p.title))
     }
     return <Box flexDirection="column" rowGap={e.surface === 'terminal' ? 0 : 1}>{boxes}</Box>
   })

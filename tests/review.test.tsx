@@ -41,6 +41,7 @@ const msg = ($: any, text: string, requestId = 'm1', surface = 'desktop') =>
 const pane = ($: any, requestId: string, surface = 'desktop') =>
   $.ui.mount({ plugin: 'boxis', surface, component: 'Pane', requestId, props: {} } as never)
 const turnEnd = (answer: string) => ({ answer, reason: 'answer', durationMs: 1, isAborted: false, turnId: 't' }) as never
+const NOW = 1_800_000_000_000
 const pin = (id: string, created: number, text?: string): Pin => ({ id, type: 'warning', title: 'warning', excerpt: 'x', created, ...(text === undefined ? {} : { text }) })
 const size = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length
 
@@ -65,7 +66,7 @@ test('pins: pinning with the store full of other sessions keeps the pins key und
   // Two UTF-8 bytes per character: the budget counts bytes, not characters.
   const big = 'é'.repeat(MAX_TEXT)
   const others: Record<string, Pin[]> = {}
-  for (let s = 0; s < 3; s++) others[`s${s + 2}`] = Array.from({ length: 100 }, (_, i) => pin(`x${s}-${i}:0`, s * 1000 + i, big))
+  for (let s = 0; s < 3; s++) others[`s${s + 2}`] = Array.from({ length: 100 }, (_, i) => pin(`x${s}-${i}:0`, NOW - 100_000 + s * 1000 + i, big))
   expect(size(others)).toBeGreaterThan(PINS_BUDGET)
   const { disk, pins } = world(on, { pins: others })
   const ui = await msg($, 'Body.\n\n⚠️ Careful.')

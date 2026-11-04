@@ -67,7 +67,8 @@ test('slot labels are bilingual: both languages give identical boxes', () => {
   // Every box but the wrap-up holds the same text: the labels themselves never reach the box.
   expect(pt.slice(0, 5)).toEqual(en.slice(0, 5))
   expect(split('🧪 Test:\n1. a')).toEqual(split('🧪 Testar:\n1. a'))
-  expect(split('🧪 Test\n1. a')).toEqual(split('🧪 Testar\n1. a'))
+  // Without the colon it is not the slot: plain body text.
+  expect(types('🧪 Test\n1. a')).toEqual(['body'])
   expect(types('🧪 Tests are green.')).toEqual(['body'])
 })
 
@@ -89,4 +90,43 @@ test('a one-sentence answer stays whole', () => {
 
 test('a code block after the test steps goes to the body', () => {
   expect(types('🧪 Test:\n1. Paste:\n\n```text\nhi\n```')).toEqual(['test', 'body'])
+})
+
+test('a heading opens a body box titled with the subject; the slot boxes keep their own titles', () => {
+  const p = split([
+    'Intro line.',
+    '',
+    '### First **subject**',
+    'Text one.',
+    '',
+    'More of one.',
+    '## Second subject ##',
+    'Text two.',
+    '⚠️ Careful.',
+    'After the warning.',
+    '```md',
+    '### not a heading inside a block',
+    '```',
+  ].join('\n'))
+  expect(p.map(x => [x.type, x.title])).toEqual([
+    ['body', undefined],
+    ['body', 'First subject'],
+    ['body', 'Second subject'],
+    ['warning', undefined],
+    ['body', undefined],
+  ])
+  expect(p[1].text).toBe('Text one.\n\nMore of one.')
+  expect(p[4].text).toContain('### not a heading inside a block')
+})
+
+test('one heading alone still gives its titled box; a heading with nothing under it gives none', () => {
+  expect(split('### Only\ntext')).toEqual([{ type: 'body', text: 'text', title: 'Only' }])
+  expect(types('### Empty\n⚠️ x')).toEqual(['warning'])
+  expect(types('# Big title\ntext')).toEqual(['body'])
+})
+
+test('labelled slots need label and colon: a bare check is body, the wrap-up keeps its label', () => {
+  expect(types('✅ passed')).toEqual(['body'])
+  expect(split('✅ Feito: x. ➡️ Planejado: y.')).toEqual([{ type: 'wrap-up', text: 'Feito: x. ➡️ Planejado: y.' }])
+  expect(split('✅ Done: x.')[0].text).toBe('Done: x.')
 })

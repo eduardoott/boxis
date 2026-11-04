@@ -252,7 +252,7 @@ const answerOf = (i: number) => `Body ${i}.\n\n⚠️ Warn ${i}.`
 
 test('pin limit: 5 by default; the sixth pin drops the oldest of this session and says which in a toast', async ($, on) => {
   const { pins, toasts, session, stored } = world(on)
-  stored.pins = { other: [{ id: 'o:0', type: 'body', title: 'answer', excerpt: 'o', created: 0 }] }
+  stored.pins = { other: [{ id: 'o:0', type: 'body', title: 'answer', excerpt: 'o', created: 1_799_999_999_000 }] }
   for (let i = 0; i < 5; i++) await (async () => { const ui = await mount($, 'desktop', `m${i}`, answerOf(i)); await ui.press({ key: 'pin-1' }); await ui.unmount() })()
   expect(pins().map(p => p.excerpt)).toEqual(['Warn 0.', 'Warn 1.', 'Warn 2.', 'Warn 3.', 'Warn 4.'])
   expect(toasts).toEqual([])
@@ -280,7 +280,7 @@ test('pin limit follows maxPins: 1 keeps only the newest; unpinning never drops 
 })
 
 test('pin limit: a session already over the limit keeps its pins until a new pin trims it', async ($, on) => {
-  const old = Array.from({ length: 8 }, (_, i) => ({ id: `h${i}:0`, type: 'body', title: 'answer', excerpt: `h${i}`, created: i }))
+  const old = Array.from({ length: 8 }, (_, i) => ({ id: `h${i}:0`, type: 'body', title: 'answer', excerpt: `h${i}`, created: 1_799_999_999_000 + i }))
   const { pins, toasts } = world(on, { pins: { s1: old } })
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
   expect((await pane.findAll({ type: 'Button' })).length).toBe(8)

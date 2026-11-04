@@ -5,11 +5,12 @@ import { closesFence, openFence, type Fence } from './fence'
 
 export type BoxType = 'body' | 'decision' | 'about-you' | 'warning' | 'scope' | 'document' | 'object' | 'test' | 'wrap-up'
 
-type Piece = { type: BoxType; text: string }
+// title: the subject a "### heading" gave a body box; the other types keep their fixed title.
+export type Piece = { type: BoxType; text: string; title?: string }
 
 // Order matters: "❓ About you:" before the bare "❓". Each label also takes its Portuguese form
 // ("Sobre você", "Testar"), so answers written in either language give the same boxes.
-// "Test" must end the word, so "🧪 Tests" stays body text.
+// Labelled slots need the label and the colon ("✅ Done:", "🧪 Test:"): a bare "✅ passed" is body text.
 const STARTS: [RegExp, BoxType][] = [
   [/^❓\s*(?:About you|Sobre você):\s*/iu, 'about-you'],
   [/^❓\s*/u, 'decision'],
@@ -17,10 +18,13 @@ const STARTS: [RegExp, BoxType][] = [
   [/^🚧\s*/u, 'scope'],
   [/^📄\s*/u, 'document'],
   [/^📌\s*/u, 'object'],
-  [/^🧪\s*(?:Testar|Test(?!\p{L})):?\s*/u, 'test'],
-  [/^✅\s*/u, 'wrap-up'],
+  [/^🧪\s*(?:Testar|Test):\s*/iu, 'test'],
+  // The wrap-up keeps "Done:" in its text: it sits next to "Planned:" in the same paragraph.
+  [/^✅\s*(?=(?:Feito|Done):)/iu, 'wrap-up'],
 ]
 
+// A heading opens a body box of its own, titled with the subject.
+const HEADING = /^#{2,3}\s+(.+?)\s*#*\s*$/
 const STEP = /^\s*\d+[.)]\s/
 const INDENTED = /^\s+\S/
 
@@ -34,14 +38,14 @@ function typeOfLine(line: string): { type: BoxType; rest: string } | null {
 
 export function split(text: string): Piece[] {
   const pieces: Piece[] = []
-  let current: { type: BoxType; lines: string[] } | null = null
+  let current: { type: BoxType; lines: string[]; title?: string } | null = null
   let blanks: string[] = []
   let fence: Fence | null = null
 
   const close = () => {
     if (current) {
       const t = current.lines.join('\n').trim()
-      if (t) pieces.push({ type: current.type, text: t })
+      if (t) pieces.push({ type: current.type, text: t, ...(current.title ? { title: current.title } : {}) })
     }
     current = null
   }
@@ -74,6 +78,13 @@ export function split(text: string): Piece[] {
       const type: BoxType = current?.type === 'test' && INDENTED.test(line) ? 'test' : 'body'
       put(type, line)
       fence = opens
+      continue
+    }
+    const heading = HEADING.exec(line)
+    if (heading) {
+      close()
+      blanks = []
+      current = { type: 'body', lines: [], title: heading[1].replace(/\*\*|__|`/g, '').trim() }
       continue
     }
     const found = typeOfLine(line)
