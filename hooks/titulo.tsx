@@ -14,6 +14,8 @@ export type TituloProps = {
   chave: string
   // Só na última caixa da última resposta: o botão que marca todas as caixas da conversa.
   todas?: boolean
+  // A caixa está na lista de pins desta sessão: o botão à esquerda do check mostra 📌.
+  fixada?: boolean
 }
 
 // Sliders. 5 pulsos de 3 tons a 100 ms: mais piscadas e mais rápidas, a pedido dele (01/11).
@@ -25,6 +27,7 @@ export const QUADRO_MS = 80
 export const QUADROS_CHECK = ['○', '◔', '◔', '◑', '◑', '◕', '◕', '✓']
 const QUADROS_APAGADOS = [0, 1, 3, 5]
 const PONTO_PARADO = '●'
+export const PIN = { fixada: '📌', solta: '⚲' }
 
 type Local = {
   passo: number
@@ -95,6 +98,9 @@ const Titulo: ClientModule<TituloProps, Local> = (props, surface) => {
         </Text>
       </Box>
       <Box flexDirection="row" gap={1} flexShrink={0}>
+        <Button key={`pin-${props.chave}`} label={props.fixada ? PIN.fixada : PIN.solta} onPress={() => surface.post({ pin: ref.chave })}>
+          {props.fixada ? <Text>{PIN.fixada}</Text> : <Text dimColor>{PIN.solta}</Text>}
+        </Button>
         {props.todas ? (
           <Button key={`todas-${props.chave}`} label="all" onPress={() => surface.post({ todas: true })}>
             <Text dimColor>all</Text>

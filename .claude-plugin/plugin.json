@@ -1,5 +1,5 @@
 {
   "name": "boxis",
-  "version": "0.11.1",
-  "description": "Claude's answers in colour-coded boxes by type (decision, warning, scope, test, wrap-up). Uses the Skins theme on the inside when Skins is on (optional). A check per box and an \"all\" button on the last answer. /boxis opens the mod's own colour panel."
+  "version": "0.12.0",
+  "description": "Claude's answers in colour-coded boxes by type (decision, warning, scope, test, wrap-up). Uses the Skins theme on the inside when Skins is on (optional). A check per box and an \"all\" button on the last answer. Pin a box (⚲) to list it in a Pins pane and jump back to it; /boxis pins opens the list. /boxis opens the mod's own colour panel."
 }

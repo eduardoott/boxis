@@ -98,14 +98,14 @@ test('a marcação vale pelo texto da resposta, não pelo id que a tela dá à m
   await reaberta.unmount()
 })
 
-test('/boxis check off tira o botão e ignora o que estava marcado', async ($, on) => {
+test('/boxis check off tira o botão ✓ (o pin fica) e ignora o que estava marcado', async ($, on) => {
   mock.store(on, { config: { check: false }, lidas: ['msg-2:0'] })
   on('ui.render', { component: 'AssistantMessage' }, async ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>desenho de baixo</Text>
   })
   const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', requestId: 'msg-2', props: { text: 'oi', isFirstOfReply: true } } as never)
-  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['pin-0'])
   expect(await ui.find({ type: 'Text', text: /desenho de baixo/ })).toBeDefined()
   await ui.unmount()
 })
@@ -503,11 +503,11 @@ test('client: ui.message com lida alterna a marca e ela persiste; dado torto nã
   await reaberta.unmount()
 })
 
-test('client com check off: o título estático de hoje, sem Client', async ($, on) => {
+test('client com check off: o título estático de hoje, sem Client, só com o pin', async ($, on) => {
   mundoDoPulso(on, { animacao: 'client', check: false })
   const ui = await montarClient($)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'pin-1', 'pin-2', 'pin-3'])
   expect((await ui.find({ type: 'Text', text: /^warning$/ }))?.props.color).toBe('#E0B040')
   await ui.unmount()
 })
@@ -516,7 +516,7 @@ test('client em superfície sem Client: o Button de hoje', async ($, on) => {
   mundoDoPulso(on, { animacao: 'client' })
   const ui = await montarClient($, PULSANDO, 'vscode')
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
-  expect((await ui.findAll({ type: 'Button' })).length).toBe(4)
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'lida-0', 'pin-1', 'lida-1', 'pin-2', 'lida-2', 'pin-3', 'lida-3'])
   await ui.unmount()
 })
 

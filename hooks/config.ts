@@ -175,6 +175,7 @@ export function resumo(cfg: Config): string {
 export const AJUDA = [
   '/boxis                                opens the config panel',
   '/boxis status                         shows the config as text',
+  '/boxis pins                           opens the pins of this session (⚲ on a box pins it)',
   '/boxis on | off                       turns the boxes on or off',
   '/boxis screen light | dark            backgrounds for a light or a dark screen',
   '/boxis check on | off                 ✓ button to mark a box as understood',
@@ -188,12 +189,13 @@ export const AJUDA = [
 
 // O que a pessoa digita depois de /boxis vira uma mudança. Palavra em inglês manda; a antiga
 // em português (tela, animacao, intensidade, cor, fundo, padrao) segue valendo como apelido.
-export function lerComando(args: string): Mudanca | 'mostrar' | 'painel' | { erro: string } {
+export function lerComando(args: string): Mudanca | 'mostrar' | 'painel' | 'pins' | { erro: string } {
   const p = args.trim().split(/\s+/).filter(Boolean)
   const [c, a, b] = [p[0]?.toLowerCase(), p[1], p[2]]
   const a2 = a?.toLowerCase()
   if (!c) return 'painel'
   if (c === 'status') return 'mostrar'
+  if (c === 'pins' || c === 'pin' || c === 'fixadas') return 'pins'
   if (c === 'screen' || c === 'tela') {
     if (a2 === 'light' || a2 === 'clara') return { claro: true }
     if (a2 === 'dark' || a2 === 'escura') return { claro: false }

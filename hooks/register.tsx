@@ -1,9 +1,9 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface, UiScrollArgs } from 'claude-code'
 import { cortar, type Tipo } from './cortar'
 import { AJUDA, BASE, ROTULO_ANIMACAO, TELA, TIPOS, VERDE, aplicar, lerComando, lerConfig, misturar, nomeDoTipo, proximaAnimacao, proximaCor, resumo, visual, type Config, type Mudanca } from './config'
 import { pesos, separarTabelas, temTabela } from './tabela'
 import type { BrilhoProps } from './brilho'
-import type { TituloProps } from './titulo'
+import { PIN, type TituloProps } from './titulo'
 
 const CERCA = /^\s*(```|~~~)/m
 
@@ -213,6 +213,164 @@ function fechar($: EngineInterface, id: string) {
   })
 }
 
+// Pins: caixas que a pessoa fixou para voltar a elas, por sessão. Guardadas como { [sessão]: Pin[] }.
+const CHAVE_PINS = 'pins'
+const PAINEL_PINS = 'boxis-pins'
+const MAX_PINS = 100
+const MAX_SESSOES_PINS = 50
+const MAX_TRECHO = 60
+// O markdown da caixa vai junto no pin para o painel redesenhá-la; o teto segura o tamanho do store.
+export const MAX_TEXTO = 6000
+// Pin antigo não tem texto: o painel cai na linha de título e trecho.
+export type Pin = { id: string; tipo: Tipo; titulo: string; trecho: string; texto?: string; requestId?: string; criado: number }
+type InfoCaixa = { tipo: Tipo; trecho: string; texto: string; requestId?: string }
+
+// Primeira linha com texto da caixa, sem os marcadores do markdown, numa linha curta.
+// O _ fica: some de nome de proc (usp_ww_x) se fosse tirado.
+export function trechoDe(texto: string): string {
+  const linha = texto.split('\n').map(l => l.trim()).find(l => l && !CERCA.test(l)) ?? ''
+  const limpo = linha
+    .replace(/^(?:[-*+]|\d+[.)]|#{1,6}|>)\s+/, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\*\*|__|~~|`|\*/g, '')
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return limpo.length > MAX_TRECHO ? `${limpo.slice(0, MAX_TRECHO - 1).trimEnd()}…` : limpo
+}
+
+function lerTodosPins(v: unknown): Record<string, Pin[]> {
+  const todos: Record<string, Pin[]> = {}
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return todos
+  for (const [sessao, lista] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(lista)) continue
+    const boas = lista.filter((p): p is Pin => !!p && typeof p === 'object' && typeof p.id === 'string' && TIPOS.includes(p.tipo)
+      && typeof p.titulo === 'string' && typeof p.trecho === 'string' && typeof p.criado === 'number'
+      && (p.texto === undefined || typeof p.texto === 'string'))
+    if (boas.length) todos[sessao] = boas
+  }
+  return todos
+}
+async function sessaoAtual($: EngineInterface): Promise<string> {
+  try { return String(await $.session.id()) } catch { return '' }
+}
+// Depois de um /clear o id muda sem session.start: a cópia em memória confere a sessão a cada leitura.
+let pins: { sessao: string; lista: Pin[] } | null = null
+async function lerPins($: EngineInterface): Promise<Pin[]> {
+  const sessao = await sessaoAtual($)
+  if (!pins || pins.sessao !== sessao) pins = { sessao, lista: lerTodosPins(await $.store.get(CHAVE_PINS))[sessao] ?? [] }
+  return pins.lista
+}
+async function gravarPins($: EngineInterface, mudar: (lista: Pin[]) => Pin[]) {
+  const sessao = await sessaoAtual($)
+  // Relida do disco, como as lidas: o CLI e o app gravam no mesmo arquivo.
+  const todos = lerTodosPins(await $.store.get(CHAVE_PINS))
+  const lista = mudar(todos[sessao] ?? []).slice(-MAX_PINS)
+  delete todos[sessao]
+  if (lista.length) todos[sessao] = lista
+  const sessoes = Object.keys(todos)
+  for (const velha of sessoes.slice(0, Math.max(0, sessoes.length - MAX_SESSOES_PINS))) delete todos[velha]
+  await $.store.set(CHAVE_PINS, todos)
+  pins = { sessao, lista }
+  $.ui.invalidate('ui.render')
+}
+
+// O que o pin precisa de cada caixa desenhada: o título do Client só posta o id dela.
+const caixasVistas = new Map<string, InfoCaixa>()
+// O requestId muda entre ao vivo e reaberta: o último que a tela usou para cada resposta é o que rola.
+const pedidos = new Map<string, string>()
+function lembrar<V>(mapa: Map<string, V>, chave: string, valor: V) {
+  mapa.delete(chave)
+  mapa.set(chave, valor)
+  for (const velha of mapa.keys()) {
+    if (mapa.size <= MAX_DESENHADAS * 2) break
+    mapa.delete(velha)
+  }
+}
+
+async function abrirPins($: EngineInterface, focus: boolean) {
+  await $.ui.open({ id: PAINEL_PINS, title: 'Pins', closeOnEscape: true, ...(focus ? { focus: true } : {}) })
+}
+async function alternarPin($: EngineInterface, id: string, info?: InfoCaixa) {
+  let fixou = false
+  const criado = await $.clock.now()
+  await gravarPins($, lista => {
+    if (lista.some(p => p.id === id)) return lista.filter(p => p.id !== id)
+    const c = info ?? caixasVistas.get(id)
+    if (!c) return lista
+    fixou = true
+    return [...lista, { id, tipo: c.tipo, titulo: BASE[c.tipo].titulo ?? 'answer', trecho: c.trecho, texto: c.texto.slice(0, MAX_TEXTO), ...(c.requestId ? { requestId: c.requestId } : {}), criado }]
+  })
+  if (fixou) await abrirPins($, false)
+}
+const alvoDa = (id: string) => `alvo-${id}`
+// Para onde o clique no pin rola: a marca da caixa e, de reserva, a resposta pelo último requestId visto.
+export function destinoDo(p: Pin): { key: string; requestId?: string } {
+  const requestId = pedidos.get(p.id.slice(0, p.id.lastIndexOf(':'))) ?? p.requestId
+  return requestId ? { key: alvoDa(p.id), requestId } : { key: alvoDa(p.id) }
+}
+// O motor pode recusar ({ deny }) ou rejeitar (sem superfície que role): os dois viram o motivo.
+async function rolar($: EngineInterface, args: UiScrollArgs): Promise<string | undefined> {
+  try { return (await $.ui.scroll(args)).deny } catch (erro) { return erro instanceof Error ? erro.message : String(erro) }
+}
+async function irPara($: EngineInterface, p: Pin) {
+  const { key, requestId } = destinoDo(p)
+  // Uma chamada só por clique: a segunda, depois do await, já não conta como gesto da pessoa
+  // ("not person-initiated"). A marca da caixa não é alvo no transcript; a resposta pelo requestId é.
+  const deny = await rolar($, requestId ? { to: { requestId }, block: 'start' } : { to: { key }, block: 'center' })
+  if (deny) $.ui.toast(`Could not jump to the box: ${deny}`)
+}
+
+// O que o desenho do conteúdo precisa, no chat e no painel de pins.
+// Os elementos vêm do $.ui.resolve de cada hook, e a tabela de cada superfície tem tipo próprio.
+// O $ vai à parte: o motor recusa o $ guardado dentro de um objeto.
+type Pintura = {
+  cfg: Config; surface: RenderSurface; colunas: number
+  Box: any; Text: any; Markdown: any
+}
+const colunasDe = (viewport?: { columns?: number }) => Math.max(20, (viewport?.columns ?? 100) - 2 * ESPACO_X - 2)
+
+async function solto($: EngineInterface, p: Pintura, texto: string) {
+  const { Markdown } = p
+  let feito
+  // Sem o Skins o $.skins não existe e a chamada joga; o motor recusa $.skins?. então o catch é o caminho normal.
+  try { feito = await $.skins.markdown({ surface: p.surface, text: texto, columns: p.colunas }) } catch {}
+  return feito ?? <Markdown text={texto} />
+}
+
+// Tabela desenhada aqui, e não pelo Skins: a célula longa quebra linha em vez de virar "…".
+function tabela(p: Pintura, t: { cabecalho: string[]; linhas: string[][] }, tipo: Tipo, key: string) {
+  const { Box, Text, Markdown, cfg } = p
+  const c = visual(cfg, tipo)
+  const zebra = misturar(c.fundo ?? (cfg.claro ? TELA.claro : TELA.escuro), c.cor, 0.14)
+  const w = pesos(t.cabecalho, t.linhas)
+  const celula = (texto: string, k: number, cab: boolean) => (
+    <Box key={`c-${k}`} width={0} flexGrow={w[k]} flexShrink={1} paddingX={1}>
+      {cab ? <Text color={c.cor} bold wrap="wrap">{texto.replace(/\*\*/g, '')}</Text> : <Markdown text={texto || ' '} />}
+    </Box>
+  )
+  return (
+    <Box key={key} flexDirection="column" borderStyle="round" borderColor={c.cor} width="100%">
+      <Box key="cab" flexDirection="row" backgroundColor={zebra}>{t.cabecalho.map((x, k) => celula(x, k, true))}</Box>
+      {t.linhas.map((l, i) => (
+        <Box key={`l-${i}`} flexDirection="row" backgroundColor={i % 2 ? zebra : undefined}>{l.map((x, k) => celula(x, k, false))}</Box>
+      ))}
+    </Box>
+  )
+}
+
+// trecho desenha o texto fora das tabelas: no chat ele ainda pode pedir o desenho de baixo.
+async function desenhar($: EngineInterface, p: Pintura, texto: string, tipo: Tipo, trecho: (texto: string) => Promise<unknown> = t => solto($, p, t)) {
+  const { Box } = p
+  const trechos = separarTabelas(texto)
+  if (!trechos.some(t => t.tipo === 'tabela')) return trecho(texto)
+  const partes = []
+  for (const [k, t] of trechos.entries()) {
+    partes.push(t.tipo === 'tabela' ? tabela(p, t, tipo, `tab-${k}`) : <Box key={`txt-${k}`} flexDirection="column">{await trecho(t.texto)}</Box>)
+  }
+  return <Box flexDirection="column" rowGap={1}>{partes}</Box>
+}
+
 const TIPOS_DESC = TIPOS.map(nomeDoTipo).join(', ')
 
 // Rótulo do botão de animação no painel.
@@ -221,7 +379,7 @@ const ROTULO = ROTULO_ANIMACAO
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | on | off | check on|off | animation none|clock|client|svg | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
+    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | pins | on | off | check on|off | animation none|clock|client|svg | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
     await $.tool.register({
       name: 'design',
       description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (ligado), the ✓ button that marks a box as understood (check), the animation of the boxes on arrival (animacao: none (nenhuma), clock (relogio), client, svg), background intensity (intensidade, 0 to 100) and, per type, the border and title colour (cor) and the background colour (fundo). Types: ${TIPOS_DESC}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
@@ -262,6 +420,10 @@ export const register: Register = on => {
     const pedido = lerComando(e.args)
     if (pedido === 'painel') {
       await $.ui.open({ id: PAINEL, title: 'Boxis', focus: true, closeOnEscape: true })
+      return {}
+    }
+    if (pedido === 'pins') {
+      await abrirPins($, true)
       return {}
     }
     if (pedido === 'mostrar') return { text: `${resumo(await atual($))}\n\n${AJUDA}` }
@@ -308,9 +470,14 @@ export const register: Register = on => {
 
   // O check do título (animação "client") posta "fechar" no clique e "lida" ao fim dos quadros.
   on('ui.message', async ($, e, next) => {
-    const dados = e.data as { lida?: unknown; fechar?: unknown; todas?: unknown } | null
+    const dados = e.data as { lida?: unknown; fechar?: unknown; todas?: unknown; pin?: unknown } | null
     if (!e.element.startsWith('titulo-') || !dados || typeof dados !== 'object') return next(e)
     if (dados.todas === true) { await marcarTodas($); return {} }
+    if (typeof dados.pin === 'string') {
+      const c = caixasVistas.get(dados.pin)
+      await alternarPin($, dados.pin, c && { ...c, requestId: e.requestId })
+      return {}
+    }
     if (typeof dados.fechar === 'string') { fechar($, dados.fechar); return {} }
     if (typeof dados.lida !== 'string') return next(e)
     await alternarLida($, dados.lida)
@@ -361,6 +528,70 @@ export const register: Register = on => {
     )
   })
 
+  // Os pins da sessão, o mais novo por último, cada um redesenhado como a caixa do chat.
+  // Sem animação aqui: pulso, brilho e o check só existem na conversa.
+  on('ui.render', { component: 'Pane', requestId: PAINEL_PINS }, async ($, e) => {
+    const { Box, Text, Button, Markdown } = $.ui.resolve(e)
+    const cfg = await atual($)
+    const lista = await lerPins($)
+    const marcadas = await lerLidas($)
+    const pintura: Pintura = { cfg, surface: e.surface, colunas: colunasDe(e.viewport), Box, Text, Markdown }
+    const ir = (p: Pin) => (
+      <Button key={`ir-${p.id}`} label="↗" onPress={() => void irPara($, p)}>
+        <Text dimColor>↗</Text>
+      </Button>
+    )
+    const soltar = (p: Pin) => (
+      <Button key={`soltar-${p.id}`} label="×" onPress={() => void alternarPin($, p.id)}>
+        <Text dimColor>×</Text>
+      </Button>
+    )
+    // Pin de antes do texto guardado: a linha de título e trecho, com o mesmo par de botões.
+    const linha = (p: Pin) => (
+      <Box key={`pin-${p.id}`} flexDirection="row" gap={1}>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text wrap="truncate">
+            <Text color={visual(cfg, p.tipo).cor} bold>{p.titulo}</Text>
+            {` ${p.trecho}`}
+          </Text>
+        </Box>
+        {ir(p)}
+        {soltar(p)}
+      </Box>
+    )
+    const caixa = async (p: Pin & { texto: string }) => {
+      const v = visual(cfg, p.tipo)
+      const marcada = cfg.check && marcadas.includes(p.id)
+      const c = marcada ? { ...v, cor: VERDE, fundo: misturar(cfg.claro ? TELA.claro : TELA.escuro, VERDE, 0.2) } : v
+      const leve = p.tipo === 'sobreVoce'
+      const apagada = marcada || leve
+      const dentro = leve ? <Text dimColor>{p.texto}</Text>
+        : marcada ? <Markdown text={tachar(p.texto)} dimColor />
+        : await desenhar($, pintura, p.texto, p.tipo)
+      return (
+        <Box key={`pin-${p.id}`} flexDirection="column" borderStyle={c.borda} borderColor={c.cor} backgroundColor={c.fundo}
+          paddingX={ESPACO_X} paddingY={leve ? 0 : ESPACO_Y}>
+          <Box key={`topo-${p.id}`} flexDirection="row" justifyContent="space-between">
+            <Text color={c.cor} bold={!apagada} dimColor={apagada}>{c.titulo ?? ''}</Text>
+            <Box flexDirection="row" gap={1} flexShrink={0}>
+              {ir(p)}
+              {soltar(p)}
+            </Box>
+          </Box>
+          {dentro}
+        </Box>
+      )
+    }
+    const desenhos = []
+    for (const p of lista) desenhos.push(typeof p.texto === 'string' ? await caixa(p as Pin & { texto: string }) : linha(p))
+    return (
+      <Box flexDirection="column" rowGap={e.surface === 'terminal' ? 0 : 1}>
+        {lista.length === 0 ? <Text dimColor>{`No pins yet. Use ${PIN.solta} on a box to pin it.`}</Text> : desenhos}
+        <Text dimColor>↗ jumps to the box in the chat · × unpins · Esc closes</Text>
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const cfg = await atual($)
     if (!cfg.ligado) return next(e)
@@ -379,13 +610,23 @@ export const register: Register = on => {
     const pedacos = e.props.text.length > MAX_CORTE ? null : cortar(e.props.text)
     const caixasDesta = pedacos === null || pedacos.length <= 1 && (pedacos[0]?.tipo ?? 'corpo') === 'corpo' ? 1 : pedacos.length
     verDesenhada(id, caixasDesta)
+    lembrar(pedidos, id, e.requestId)
+    const fixadas = new Set((await lerPins($)).map(p => p.id))
     // O botão "marcar todas" fica na última caixa da última resposta, ao lado do check dela.
     const ultima = cfg.check && !e.props.isSummary && ehUltima(e.props.text)
     const todas = (i: number) => ultima && i === caixasDesta - 1
-    const colunas = Math.max(20, (e.viewport?.columns ?? 100) - 2 * ESPACO_X - 2)
+    const colunas = colunasDe(e.viewport)
 
-    const caixa = (tipo: Tipo, dentro: unknown, i: number) => {
+    const caixa = (tipo: Tipo, dentro: unknown, i: number, texto: string) => {
       const v = visual(cfg, tipo)
+      const info: InfoCaixa = { tipo, trecho: trechoDe(texto), texto, requestId: e.requestId }
+      lembrar(caixasVistas, idDa(i), info)
+      const fixada = fixadas.has(idDa(i))
+      const pin = (
+        <Button key={`pin-${i}`} label={fixada ? PIN.fixada : PIN.solta} onPress={() => void alternarPin($, idDa(i), info)}>
+          {fixada ? <Text>{PIN.fixada}</Text> : <Text dimColor>{PIN.solta}</Text>}
+        </Button>
+      )
       const marcada = lida(i)
       const pulsa = !marcada && acesa(quadro) && TIPOS_QUE_PULSAM.includes(tipo)
       const base = marcada ? { ...v, cor: VERDE, fundo: misturar(cfg.claro ? TELA.claro : TELA.escuro, VERDE, 0.2) }
@@ -418,6 +659,8 @@ export const register: Register = on => {
       return (
         <Box key={`caixa-${i}`} flexDirection="column" borderStyle={c.borda} borderColor={bordaCor} backgroundColor={c.fundo}
           paddingX={ESPACO_X} paddingY={leve ? 0 : ESPACO_Y}>
+          {/* Marca vazia para o painel de pins rolar até esta caixa, e não só até o topo da resposta. */}
+          <Box key={alvoDa(idDa(i))} height={0} />
           {noCliente ? (
             <Client key={`titulo-${i}`} module="./titulo.tsx" width="100%" height={1} props={{
               titulo: c.titulo ?? '',
@@ -430,22 +673,26 @@ export const register: Register = on => {
               pulsar,
               chave: idDa(i),
               todas: todas(i),
+              fixada,
             } satisfies TituloProps} />
-          ) : cfg.check ? (
+          ) : (
             <Box key={`topo-${i}`} flexDirection="row" justifyContent="space-between">
               {titulo}
               <Box flexDirection="row" gap={1} flexShrink={0}>
+                {pin}
                 {todas(i) ? (
                   <Button key={`todas-${i}`} label="all" onPress={() => void marcarTodas($)}>
                     <Text dimColor>all</Text>
                   </Button>
                 ) : null}
-                <Button key={`lida-${i}`} label={marcada ? '✓' : '○'} onPress={() => void alternarLida($, idDa(i))}>
-                  <Text color={marcada ? VERDE : undefined} bold={marcada} dimColor={!marcada}>{marcada ? '✓' : '○'}</Text>
-                </Button>
+                {cfg.check ? (
+                  <Button key={`lida-${i}`} label={marcada ? '✓' : '○'} onPress={() => void alternarLida($, idDa(i))}>
+                    <Text color={marcada ? VERDE : undefined} bold={marcada} dimColor={!marcada}>{marcada ? '✓' : '○'}</Text>
+                  </Button>
+                ) : null}
               </Box>
             </Box>
-          ) : c.titulo ? titulo : null}
+          )}
           {dentro}
           {/* Por último: pinta por cima da borda e do conteúdo. */}
           {noCliente && brilha ? (['cima', 'baixo'] as const).map(lado => (
@@ -463,69 +710,35 @@ export const register: Register = on => {
       )
     }
 
-    const solto = async (texto: string) => {
-      let feito
-      // Sem o Skins o $.skins não existe e a chamada joga; o motor recusa $.skins?. então o catch é o caminho normal.
-      try { feito = await $.skins.markdown({ surface: e.surface, text: texto, columns: colunas }) } catch {}
-      return feito ?? <Markdown text={texto} />
-    }
-
-    // Tabela desenhada aqui, e não pelo Skins: a célula longa quebra linha em vez de virar "…".
-    const tabela = (t: { cabecalho: string[]; linhas: string[][] }, tipo: Tipo, key: string) => {
-      const c = visual(cfg, tipo)
-      const zebra = misturar(c.fundo ?? (cfg.claro ? TELA.claro : TELA.escuro), c.cor, 0.14)
-      const p = pesos(t.cabecalho, t.linhas)
-      const celula = (texto: string, k: number, cab: boolean) => (
-        <Box key={`c-${k}`} width={0} flexGrow={p[k]} flexShrink={1} paddingX={1}>
-          {cab ? <Text color={c.cor} bold wrap="wrap">{texto.replace(/\*\*/g, '')}</Text> : <Markdown text={texto || ' '} />}
-        </Box>
-      )
-      return (
-        <Box key={key} flexDirection="column" borderStyle="round" borderColor={c.cor} width="100%">
-          <Box key="cab" flexDirection="row" backgroundColor={zebra}>{t.cabecalho.map((x, k) => celula(x, k, true))}</Box>
-          {t.linhas.map((l, i) => (
-            <Box key={`l-${i}`} flexDirection="row" backgroundColor={i % 2 ? zebra : undefined}>{l.map((x, k) => celula(x, k, false))}</Box>
-          ))}
-        </Box>
-      )
-    }
+    const pintura: Pintura = { cfg, surface: e.surface, colunas, Box, Text, Markdown }
 
     // O desenho de baixo só pode ser pedido uma vez por resposta: vai para o primeiro trecho
     // com bloco de código, que assim mantém os botões Run e copiar. O resto é desenhado aqui,
     // no tema do Skins quando ele está ligado.
     let baixoLivre = true
     const trecho = async (texto: string) => {
-      if (!baixoLivre || !CERCA.test(texto)) return solto(texto)
+      if (!baixoLivre || !CERCA.test(texto)) return solto($, pintura, texto)
       baixoLivre = false
-      return (await next({ ...e, props: { ...e.props, text: texto } })) ?? solto(texto)
+      return (await next({ ...e, props: { ...e.props, text: texto } })) ?? solto($, pintura, texto)
     }
-
-    const desenhar = async (texto: string, tipo: Tipo) => {
-      const trechos = separarTabelas(texto)
-      if (!trechos.some(t => t.tipo === 'tabela')) return trecho(texto)
-      const partes = []
-      for (const [k, t] of trechos.entries()) {
-        partes.push(t.tipo === 'tabela' ? tabela(t, tipo, `tab-${k}`) : <Box key={`txt-${k}`} flexDirection="column">{await trecho(t.texto)}</Box>)
-      }
-      return <Box flexDirection="column" rowGap={1}>{partes}</Box>
-    }
+    const desenharAqui = (texto: string, tipo: Tipo) => desenhar($, pintura, texto, tipo, trecho)
 
     // Sem slot nenhum (ou grande demais): uma caixa do corpo só, como na fase 1.
     // Caixa marcada como entendida: o texto sai apagado e tachado, com a formatação inteira.
     if (pedacos === null || pedacos.length <= 1 && (pedacos[0]?.tipo ?? 'corpo') === 'corpo') {
-      if (lida(0)) return caixa('corpo', <Markdown text={tachar(e.props.text)} dimColor />, 0)
-      if (pedacos && temTabela(e.props.text)) return caixa('corpo', await desenhar(e.props.text, 'corpo'), 0)
+      if (lida(0)) return caixa('corpo', <Markdown text={tachar(e.props.text)} dimColor />, 0, e.props.text)
+      if (pedacos && temTabela(e.props.text)) return caixa('corpo', await desenharAqui(e.props.text, 'corpo'), 0, e.props.text)
       const dentro = await next(e)
       if (dentro === undefined || dentro === null) return dentro
-      return caixa('corpo', dentro, 0)
+      return caixa('corpo', dentro, 0, e.props.text)
     }
 
     const caixas = []
     for (const [i, p] of pedacos.entries()) {
       const dentro = p.tipo === 'sobreVoce' ? <Text dimColor>{p.texto}</Text>
         : lida(i) ? <Markdown text={tachar(p.texto)} dimColor />
-        : await desenhar(p.texto, p.tipo)
-      caixas.push(caixa(p.tipo, dentro, i))
+        : await desenharAqui(p.texto, p.tipo)
+      caixas.push(caixa(p.tipo, dentro, i, p.texto))
     }
     return <Box flexDirection="column" rowGap={e.surface === 'terminal' ? 0 : 1}>{caixas}</Box>
   })
