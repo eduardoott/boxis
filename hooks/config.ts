@@ -1,183 +1,218 @@
-// Ajustes do Caixinhas que a pessoa muda: liga/desliga, intensidade do fundo e cor de cada tipo.
-// Funções puras; quem guarda é o $.store, em register.tsx.
+// The Boxis settings a person changes: on/off, background intensity and the colour of each type.
+// Pure functions; $.store keeps them, in register.tsx.
+//
+// Earlier versions stored and accepted Portuguese words. Every Portuguese word left in this file is
+// such a legacy alias: it lets an old saved config, and the old /boxis words, keep working.
 
-import type { Tipo } from './cortar'
+import type { BoxType } from './split'
 
-export const TIPOS: Tipo[] = ['corpo', 'decisao', 'aviso', 'escopo', 'documento', 'objeto', 'teste', 'fechamento', 'sobreVoce']
+export const TYPES: BoxType[] = ['body', 'decision', 'warning', 'scope', 'document', 'object', 'test', 'wrap-up', 'about-you']
 
-// Nome que a pessoa digita → tipo. O nome em inglês é o que aparece; os em português (com e sem
-// acento) ficam como apelido, para comando antigo e config guardada continuarem valendo.
-const NOMES: Record<string, Tipo> = {
-  body: 'corpo', decision: 'decisao', warning: 'aviso', scope: 'escopo', document: 'documento',
-  object: 'objeto', test: 'teste', 'wrap-up': 'fechamento', wrapup: 'fechamento', 'about-you': 'sobreVoce', aboutyou: 'sobreVoce',
-  corpo: 'corpo', decisao: 'decisao', 'decisão': 'decisao', aviso: 'aviso', escopo: 'escopo',
-  documento: 'documento', objeto: 'objeto', teste: 'teste', fechamento: 'fechamento',
-  'sobre-voce': 'sobreVoce', 'sobre-você': 'sobreVoce', sobrevoce: 'sobreVoce', 'sobrevocê': 'sobreVoce', sobreVoce: 'sobreVoce',
+// Name a person types (or an old config holds) → type. The English name is the one shown.
+const NAMES: Record<string, BoxType> = {
+  body: 'body', decision: 'decision', warning: 'warning', scope: 'scope', document: 'document',
+  object: 'object', test: 'test', 'wrap-up': 'wrap-up', wrapup: 'wrap-up', 'about-you': 'about-you', aboutyou: 'about-you',
+  // Legacy aliases, with and without accents; the camel-case one is the key old configs and pins hold.
+  corpo: 'body', decisao: 'decision', 'decisão': 'decision', aviso: 'warning', escopo: 'scope',
+  documento: 'document', objeto: 'object', teste: 'test', fechamento: 'wrap-up',
+  'sobre-voce': 'about-you', 'sobre-você': 'about-you', sobrevoce: 'about-you', 'sobrevocê': 'about-you', sobreVoce: 'about-you',
 }
-// hasOwn: "constructor" e outras chaves do protótipo não são tipo.
-const doNome = (k: string): Tipo | undefined => Object.hasOwn(NOMES, k) ? NOMES[k] : undefined
-export const tipoDoNome = (nome: string): Tipo | undefined => doNome(nome.trim()) ?? doNome(nome.trim().toLowerCase())
-const NOME_INGLES: Record<Tipo, string> = {
-  corpo: 'body', decisao: 'decision', aviso: 'warning', escopo: 'scope', documento: 'document',
-  objeto: 'object', teste: 'test', fechamento: 'wrap-up', sobreVoce: 'about-you',
+// hasOwn: "constructor" and the other prototype keys are not types.
+const fromName = (k: string): BoxType | undefined => Object.hasOwn(NAMES, k) ? NAMES[k] : undefined
+export const typeFromName = (name: string): BoxType | undefined => fromName(name.trim()) ?? fromName(name.trim().toLowerCase())
+
+type TypeStyle = { color?: string; background?: string | 'none' }
+// How the boxes animate on arrival. The order is the one the panel button cycles through.
+type Animation = 'none' | 'clock' | 'client'
+const ANIMATIONS: Animation[] = ['none', 'clock', 'client']
+// Legacy animation values, accents already stripped.
+const LEGACY_ANIMATIONS: Record<string, Animation> = { nenhuma: 'none', relogio: 'clock' }
+const animationFrom = (v: unknown): Animation | undefined => {
+  if (typeof v !== 'string') return undefined
+  const a = Object.hasOwn(LEGACY_ANIMATIONS, v) ? LEGACY_ANIMATIONS[v] : v
+  return ANIMATIONS.includes(a as Animation) ? a as Animation : undefined
 }
-export const nomeDoTipo = (t: Tipo) => NOME_INGLES[t]
-
-type Ajuste = { cor?: string; fundo?: string | 'nenhum' }
-// Animação das caixas ao chegar (exploração). A ordem é a que o botão do painel roda.
-type Animacao = 'nenhuma' | 'relogio' | 'client'
-const ANIMACOES: Animacao[] = ['nenhuma', 'relogio', 'client']
-// Nome que a pessoa vê e digita para cada animação; o valor guardado continua em português.
-export const ROTULO_ANIMACAO: Record<Animacao, string> = { nenhuma: 'none', relogio: 'clock', client: 'client' }
-const ANIMACAO_DO_NOME: Record<string, Animacao> = { none: 'nenhuma', clock: 'relogio' }
-export function proximaAnimacao(a: Animacao): Animacao {
-  const i = ANIMACOES.indexOf(a)
-  return ANIMACOES[(i + 1) % ANIMACOES.length]
+export function nextAnimation(a: Animation): Animation {
+  const i = ANIMATIONS.indexOf(a)
+  return ANIMATIONS[(i + 1) % ANIMATIONS.length]
 }
 
-export type Config = { ligado: boolean; intensidade: number; claro: boolean; check: boolean; animacao: Animacao; tipos: Partial<Record<Tipo, Ajuste>> }
+export type Config = { enabled: boolean; intensity: number; light: boolean; check: boolean; animation: Animation; maxPins: number; types: Partial<Record<BoxType, TypeStyle>> }
 
-export const PADRAO: Config = { ligado: true, intensidade: 50, claro: false, check: true, animacao: 'nenhuma', tipos: {} }
+export const DEFAULTS: Config = { enabled: true, intensity: 50, light: false, check: true, animation: 'none', maxPins: 5, types: {} }
 
-// Caixa marcada como entendida sai em verde, seja qual for o tipo.
-export const VERDE = '#5CB85C'
+// Pins per session: a short list stays a list of what matters now, not a second transcript.
+export const MIN_PINS = 1
+export const MAX_PINS = 10
+const clampPins = (n: number) => Math.max(MIN_PINS, Math.min(MAX_PINS, Math.round(n)))
 
-// Cores que o painel oferece, na ordem em que os botões ◀ ▶ passam.
-export const PALETA = [
+// A box checked as understood turns green, whatever its type.
+export const GREEN = '#5CB85C'
+
+// Colours the panel offers, in the order its ◀ ▶ buttons step through.
+export const PALETTE = [
   '#7F77DD', '#4A90E2', '#3FB6B2', '#5CB85C', '#A3BE3C', '#E0B040', '#F08A3C',
   '#E05D5D', '#E06AA8', '#B39DDB', '#9AA0A6', '#B0B0B0', '#6B6B6B',
 ]
-export function proximaCor(atual: string, passo: 1 | -1): string {
-  const i = PALETA.indexOf(atual.toUpperCase())
-  const n = PALETA.length
-  return PALETA[i < 0 ? 0 : (i + passo + n) % n]
+export function nextColor(current: string, step: 1 | -1): string {
+  const i = PALETTE.indexOf(current.toUpperCase())
+  const n = PALETTE.length
+  return PALETTE[i < 0 ? 0 : (i + step + n) % n]
 }
 
-// Fundo da tela sobre o qual as cores misturam: escuro ou claro.
-export const TELA = { escuro: '#121212', claro: '#F7F7F7' }
+// The screen background the colours mix into: dark or light.
+export const SCREEN = { dark: '#121212', light: '#F7F7F7' }
 
-// Cor da borda e título de cada tipo (decisão A: cores fixas por significado).
-export const BASE: Record<Tipo, { cor: string; borda: string; titulo?: string; semFundo?: boolean }> = {
-  corpo: { cor: '#7F77DD', borda: 'round' },
-  decisao: { cor: '#4A90E2', borda: 'bold', titulo: 'your call' },
-  aviso: { cor: '#E0B040', borda: 'round', titulo: 'warning' },
-  escopo: { cor: '#9AA0A6', borda: 'round', titulo: 'left out' },
-  documento: { cor: '#B0B0B0', borda: 'round', titulo: 'documents' },
-  objeto: { cor: '#B0B0B0', borda: 'round', titulo: 'to apply' },
-  teste: { cor: '#B39DDB', borda: 'round', titulo: 'test for you' },
-  fechamento: { cor: '#5CB85C', borda: 'round', titulo: 'wrap-up' },
-  // A pergunta da lista de desconhecidos: o menor destaque de todos, sem fundo.
-  sobreVoce: { cor: '#6B6B6B', borda: 'single', titulo: 'about you', semFundo: true },
+// Border and title colour of each type: fixed colours by meaning.
+export const BASE: Record<BoxType, { color: string; border: string; title?: string; noBackground?: boolean }> = {
+  body: { color: '#7F77DD', border: 'round' },
+  decision: { color: '#4A90E2', border: 'bold', title: 'your call' },
+  warning: { color: '#E0B040', border: 'round', title: 'warning' },
+  scope: { color: '#9AA0A6', border: 'round', title: 'left out' },
+  document: { color: '#B0B0B0', border: 'round', title: 'documents' },
+  object: { color: '#B0B0B0', border: 'round', title: 'to apply' },
+  test: { color: '#B39DDB', border: 'round', title: 'test for you' },
+  'wrap-up': { color: '#5CB85C', border: 'round', title: 'wrap-up' },
+  // A question about the reader: the least emphasis of all, no background.
+  'about-you': { color: '#6B6B6B', border: 'single', title: 'about you', noBackground: true },
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/
-const ehCor = (s: unknown): s is string => typeof s === 'string' && HEX.test(s)
+const isColor = (s: unknown): s is string => typeof s === 'string' && HEX.test(s)
 
-// O fundo nasce da cor da borda misturada no fundo da tela; a intensidade diz quanto.
-export function misturar(a: string, b: string, k: number): string {
+// The background is the border colour mixed into the screen background; intensity says how much.
+export function mix(a: string, b: string, k: number): string {
   const p = (s: string, i: number) => parseInt(s.slice(1 + 2 * i, 3 + 2 * i), 16)
   const c = [0, 1, 2].map(i => Math.round(p(a, i) * (1 - k) + p(b, i) * k))
   return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase()
 }
 
-export function visual(cfg: Config, t: Tipo): { cor: string; fundo?: string; borda: string; titulo?: string } {
+export function style(cfg: Config, t: BoxType): { color: string; background?: string; border: string; title?: string } {
   const base = BASE[t]
-  const aj = cfg.tipos[t] ?? {}
-  const cor = ehCor(aj.cor) ? aj.cor : base.cor
-  let fundo: string | undefined
-  if (aj.fundo === 'nenhum') fundo = undefined
-  else if (ehCor(aj.fundo)) fundo = aj.fundo
-  else if (!base.semFundo && cfg.intensidade > 0) fundo = misturar(cfg.claro ? TELA.claro : TELA.escuro, cor, 0.36 * cfg.intensidade / 100)
-  return { cor, fundo, borda: base.borda, titulo: base.titulo }
+  const s = cfg.types[t] ?? {}
+  const color = isColor(s.color) ? s.color : base.color
+  let background: string | undefined
+  if (s.background === 'none') background = undefined
+  else if (isColor(s.background)) background = s.background
+  else if (!base.noBackground && cfg.intensity > 0) background = mix(cfg.light ? SCREEN.light : SCREEN.dark, color, 0.36 * cfg.intensity / 100)
+  return { color, background, border: base.border, title: base.title }
 }
 
-// O que vem do $.store pode ser qualquer coisa: só passa o que tem forma.
-export function lerConfig(v: unknown): Config {
-  const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
-  const tipos: Config['tipos'] = {}
-  const t = (o.tipos && typeof o.tipos === 'object' ? o.tipos : {}) as Record<string, unknown>
-  for (const tipo of TIPOS) {
-    const a = t[tipo] as Record<string, unknown> | undefined
-    if (!a || typeof a !== 'object') continue
-    const aj: Ajuste = {}
-    if (ehCor(a.cor)) aj.cor = a.cor
-    if (ehCor(a.fundo) || a.fundo === 'nenhum') aj.fundo = a.fundo as string
-    if (aj.cor || aj.fundo) tipos[tipo] = aj
+const asObject = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>
+// The new key when it is there, else its legacy name.
+const pick = (o: Record<string, unknown>, key: string, legacy: string) => Object.hasOwn(o, key) ? o[key] : o[legacy]
+
+// Whatever comes from $.store: only what has the right shape passes. Reads the current shape and
+// the legacy one, and always returns the current one.
+export function readConfig(v: unknown): Config {
+  const o = asObject(v)
+  const types: Config['types'] = {}
+  // Legacy entries first, so a current entry for the same type wins.
+  for (const source of [asObject(o.tipos), asObject(o.types)]) {
+    for (const [name, raw] of Object.entries(source)) {
+      const type = typeFromName(name)
+      if (!type || !raw || typeof raw !== 'object') continue
+      const a = raw as Record<string, unknown>
+      const color = pick(a, 'color', 'cor')
+      const background = pick(a, 'background', 'fundo')
+      const s: TypeStyle = {}
+      if (isColor(color)) s.color = color
+      if (isColor(background)) s.background = background
+      else if (background === 'none' || background === 'nenhum') s.background = 'none'
+      if (s.color || s.background) types[type] = s
+    }
   }
-  const i = typeof o.intensidade === 'number' ? Math.round(o.intensidade) : PADRAO.intensidade
-  // Config antiga sem o campo, valor torto ou o 'svg' que saiu: sem animação.
-  const animacao = ANIMACOES.includes(o.animacao as Animacao) ? o.animacao as Animacao : PADRAO.animacao
-  return { ligado: o.ligado !== false, intensidade: Math.max(0, Math.min(100, i)), claro: o.claro === true, check: o.check !== false, animacao, tipos }
+  const raw = pick(o, 'intensity', 'intensidade')
+  const i = typeof raw === 'number' ? Math.round(raw) : DEFAULTS.intensity
+  // A config without the field, a bad value or the retired 'svg': no animation.
+  const animation = animationFrom(pick(o, 'animation', 'animacao')) ?? DEFAULTS.animation
+  const maxPins = typeof o.maxPins === 'number' && isFinite(o.maxPins) ? clampPins(o.maxPins) : DEFAULTS.maxPins
+  return {
+    enabled: pick(o, 'enabled', 'ligado') !== false,
+    intensity: Math.max(0, Math.min(100, i)),
+    light: pick(o, 'light', 'claro') === true,
+    check: o.check !== false,
+    animation,
+    maxPins,
+    types,
+  }
 }
 
-// Uma mudança pedida (pelo comando ou pela ferramenta). Devolve a config nova ou o erro.
-export type Mudanca = {
-  ligado?: boolean
-  claro?: boolean
+// A requested change (from the command or the tool). Returns the new config or the error.
+export type Change = {
+  enabled?: boolean
+  light?: boolean
   check?: boolean
-  animacao?: string
-  intensidade?: number
-  tipos?: Record<string, { cor?: string; fundo?: string }>
-  restaurar?: boolean
+  animation?: string
+  intensity?: number
+  maxPins?: number
+  types?: Record<string, { color?: string; background?: string }>
+  reset?: boolean
 }
 
-// Palavras que voltam um campo ao original e que tiram o fundo: inglês primeiro, português como apelido.
-const VOLTA = ['default', 'auto', 'padrao', 'padrão']
-const SEM_FUNDO = ['none', 'nenhum']
-const CAMPO = { cor: 'color', fundo: 'background' } as const
+// Words that restore a field to the original, and words that remove the background.
+const RESTORE = ['default', 'auto', 'padrao', 'padrão']
+const NO_BACKGROUND = ['none', 'nenhum']
 
-export function aplicar(cfg: Config, m: Mudanca): { cfg: Config } | { erro: string } {
-  let novo: Config = m.restaurar ? { ...PADRAO, tipos: {}, ligado: cfg.ligado, claro: cfg.claro, check: cfg.check, animacao: cfg.animacao } : { ...cfg, tipos: { ...cfg.tipos } }
-  if (m.ligado !== undefined) novo.ligado = !!m.ligado
-  if (m.claro !== undefined) novo.claro = !!m.claro
-  if (m.check !== undefined) novo.check = !!m.check
-  if (m.animacao !== undefined) {
-    // Aceita o nome em inglês e o antigo, com e sem acento (relógio vira relogio), em qualquer caixa.
-    const digitado = String(m.animacao).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    const a = ANIMACAO_DO_NOME[digitado] ?? digitado
-    if (!ANIMACOES.includes(a as Animacao)) return { erro: 'animation: none, clock or client.' }
-    novo.animacao = a as Animacao
+export function apply(cfg: Config, m: Change): { cfg: Config } | { error: string } {
+  const next: Config = m.reset
+    ? { ...DEFAULTS, types: {}, enabled: cfg.enabled, light: cfg.light, check: cfg.check, animation: cfg.animation, maxPins: cfg.maxPins }
+    : { ...cfg, types: { ...cfg.types } }
+  if (m.enabled !== undefined) next.enabled = !!m.enabled
+  if (m.light !== undefined) next.light = !!m.light
+  if (m.check !== undefined) next.check = !!m.check
+  if (m.animation !== undefined) {
+    // Any case, with or without accents.
+    const typed = String(m.animation).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    const a = animationFrom(typed)
+    if (!a) return { error: 'animation: none, clock or client.' }
+    next.animation = a
   }
-  if (m.intensidade !== undefined) {
-    if (typeof m.intensidade !== 'number' || !isFinite(m.intensidade) || m.intensidade < 0 || m.intensidade > 100) {
-      return { erro: 'intensity goes from 0 (no background) to 100 (strong background).' }
+  if (m.intensity !== undefined) {
+    if (typeof m.intensity !== 'number' || !isFinite(m.intensity) || m.intensity < 0 || m.intensity > 100) {
+      return { error: 'intensity goes from 0 (no background) to 100 (strong background).' }
     }
-    novo.intensidade = Math.round(m.intensidade)
+    next.intensity = Math.round(m.intensity)
   }
-  for (const [nome, pedido] of Object.entries(m.tipos ?? {})) {
-    const tipo = tipoDoNome(nome)
-    if (!tipo) return { erro: `type "${nome}" does not exist. Types: ${TIPOS.map(nomeDoTipo).join(', ')}.` }
-    const aj: Ajuste = { ...(novo.tipos[tipo] ?? {}) }
-    for (const campo of ['cor', 'fundo'] as const) {
-      const v = pedido?.[campo]
+  if (m.maxPins !== undefined) {
+    if (typeof m.maxPins !== 'number' || !isFinite(m.maxPins)) return { error: `max pins goes from ${MIN_PINS} to ${MAX_PINS}.` }
+    next.maxPins = clampPins(m.maxPins)
+  }
+  for (const [name, request] of Object.entries(m.types ?? {})) {
+    const type = typeFromName(name)
+    if (!type) return { error: `type "${name}" does not exist. Types: ${TYPES.join(', ')}.` }
+    const s: TypeStyle = { ...(next.types[type] ?? {}) }
+    for (const field of ['color', 'background'] as const) {
+      const v = request?.[field]
       if (v === undefined) continue
-      if (VOLTA.includes(v)) delete aj[campo]
-      else if (campo === 'fundo' && SEM_FUNDO.includes(v)) aj.fundo = 'nenhum'
-      else if (ehCor(v)) aj[campo] = v.toUpperCase()
-      else return { erro: `${CAMPO[campo]} "${v}" is not a #RRGGBB color${campo === 'fundo' ? ', "none"' : ''} nor "default".` }
+      if (RESTORE.includes(v)) delete s[field]
+      else if (field === 'background' && NO_BACKGROUND.includes(v)) s.background = 'none'
+      else if (isColor(v)) s[field] = v.toUpperCase()
+      else return { error: `${field} "${v}" is not a #RRGGBB color${field === 'background' ? ', "none"' : ''} nor "default".` }
     }
-    if (aj.cor || aj.fundo) novo.tipos[tipo] = aj
-    else delete novo.tipos[tipo]
+    if (s.color || s.background) next.types[type] = s
+    else delete next.types[type]
   }
-  return { cfg: novo }
+  return { cfg: next }
 }
 
-export function resumo(cfg: Config): string {
-  const linhas = [
-    `Boxis ${cfg.ligado ? 'on' : 'off'} · background intensity ${cfg.intensidade} · ${cfg.claro ? 'light' : 'dark'} screen · check ${cfg.check ? 'on' : 'off'} · animation ${ROTULO_ANIMACAO[cfg.animacao]}`,
-    ...TIPOS.map(t => {
-      const v = visual(cfg, t)
-      const mudou = cfg.tipos[t] ? ' (adjusted)' : ''
-      return `  ${nomeDoTipo(t).padEnd(11)} border ${v.cor} · background ${v.fundo ?? 'none'}${mudou}`
+export function summary(cfg: Config): string {
+  const lines = [
+    `Boxis ${cfg.enabled ? 'on' : 'off'} · background intensity ${cfg.intensity} · ${cfg.light ? 'light' : 'dark'} screen · check ${cfg.check ? 'on' : 'off'} · animation ${cfg.animation} · max pins ${cfg.maxPins}`,
+    ...TYPES.map(t => {
+      const v = style(cfg, t)
+      const changed = cfg.types[t] ? ' (adjusted)' : ''
+      return `  ${t.padEnd(11)} border ${v.color} · background ${v.background ?? 'none'}${changed}`
     }),
   ]
-  return linhas.join('\n')
+  return lines.join('\n')
 }
 
-export const AJUDA = [
+export const HELP = [
   '/boxis                                opens the config panel',
   '/boxis status                         shows the config as text',
   '/boxis pins                           opens the pins of this session (⚲ on a box pins it)',
+  '/boxis pins max 1-10                  pins kept per session; past it, pinning drops the oldest',
   '/boxis on | off                       turns the boxes on or off',
   '/boxis screen light | dark            backgrounds for a light or a dark screen',
   '/boxis check on | off                 ✓ button to mark a box as understood',
@@ -186,32 +221,33 @@ export const AJUDA = [
   '/boxis color <type> #RRGGBB           border and title colour (default restores the original)',
   '/boxis background <type> #RRGGBB      fixed background (none removes it, default restores the automatic one)',
   '/boxis default                        restores every colour and the intensity to the original',
-  `Types: ${TIPOS.map(nomeDoTipo).join(', ')}`,
+  `Types: ${TYPES.join(', ')}`,
 ].join('\n')
 
-// O que a pessoa digita depois de /boxis vira uma mudança. Palavra em inglês manda; a antiga
-// em português (tela, animacao, intensidade, cor, fundo, padrao) segue valendo como apelido.
-export function lerComando(args: string): Mudanca | 'mostrar' | 'painel' | 'pins' | { erro: string } {
+// What the person types after /boxis becomes a change. The English word rules; the legacy
+// Portuguese words (tela, animacao, intensidade, cor, fundo, padrao, ...) stay as aliases.
+export function parseCommand(args: string): Change | 'status' | 'panel' | 'pins' | { error: string } {
   const p = args.trim().split(/\s+/).filter(Boolean)
   const [c, a, b] = [p[0]?.toLowerCase(), p[1], p[2]]
   const a2 = a?.toLowerCase()
-  if (!c) return 'painel'
-  if (c === 'status') return 'mostrar'
+  if (!c) return 'panel'
+  if (c === 'status') return 'status'
+  if ((c === 'pins' || c === 'pin' || c === 'fixadas') && a2 === 'max' && b !== undefined) return { maxPins: Number(b) }
   if (c === 'pins' || c === 'pin' || c === 'fixadas') return 'pins'
   if (c === 'screen' || c === 'tela') {
-    if (a2 === 'light' || a2 === 'clara') return { claro: true }
-    if (a2 === 'dark' || a2 === 'escura') return { claro: false }
+    if (a2 === 'light' || a2 === 'clara') return { light: true }
+    if (a2 === 'dark' || a2 === 'escura') return { light: false }
   }
   if (c === 'check' && (a2 === 'on' || a2 === 'off')) return { check: a2 === 'on' }
-  if (c === 'on' || c === 'ligar' || c === 'liga') return { ligado: true }
-  if (c === 'off' || c === 'desligar' || c === 'desliga') return { ligado: false }
-  if (c === 'default' || c === 'reset' || c === 'padrao' || c === 'padrão') return { restaurar: true }
-  if ((c === 'animation' || c === 'animacao' || c === 'animação') && a) return { animacao: a }
-  if (c === 'intensity' || c === 'intensidade') return { intensidade: Number(a) }
+  if (c === 'on' || c === 'ligar' || c === 'liga') return { enabled: true }
+  if (c === 'off' || c === 'desligar' || c === 'desliga') return { enabled: false }
+  if (c === 'default' || c === 'reset' || c === 'padrao' || c === 'padrão') return { reset: true }
+  if ((c === 'animation' || c === 'animacao' || c === 'animação') && a) return { animation: a }
+  if (c === 'intensity' || c === 'intensidade') return { intensity: Number(a) }
   if ((c === 'color' || c === 'cor' || c === 'background' || c === 'fundo') && a && b) {
-    const campo = c === 'color' || c === 'cor' ? 'cor' : 'fundo'
-    const palavra = b.toLowerCase().replace('padrão', 'padrao')
-    return { tipos: { [a]: { [campo]: VOLTA.includes(palavra) || SEM_FUNDO.includes(palavra) ? palavra : b } } }
+    const field = c === 'color' || c === 'cor' ? 'color' : 'background'
+    const word = b.toLowerCase().replace('padrão', 'padrao')
+    return { types: { [a]: { [field]: RESTORE.includes(word) || NO_BACKGROUND.includes(word) ? word : b } } }
   }
-  return { erro: AJUDA }
+  return { error: HELP }
 }
