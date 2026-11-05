@@ -11,8 +11,6 @@ claude plugin install boxis@boxis
 
 Then run `/reload-plugins` in any Claude window that is already open.
 
-Euler team: also available from the euler-tools marketplace as `boxis@euler-tools`.
-
 Boxis is opt-in: it changes how every answer looks, so each person installs it for themselves. `/boxis off` turns it off without uninstalling.
 
 After updating, restart any Claude window that is already open: an older version still running could rewrite pins saved in the new shape.
