@@ -4,11 +4,14 @@ A Claude Code mod: Claude's answers drawn in colour-coded boxes, one box per par
 
 ## Install
 
-From the euler-tools marketplace (added once with `/plugin marketplace add euler-software/euler-tools`):
+```
+claude plugin marketplace add eduardoott/boxis
+claude plugin install boxis@boxis
+```
 
-```
-claude plugin install boxis@euler-tools
-```
+Then run `/reload-plugins` in any Claude window that is already open.
+
+Euler team: also available from the euler-tools marketplace as `boxis@euler-tools`.
 
 Boxis is opt-in: it changes how every answer looks, so each person installs it for themselves. `/boxis off` turns it off without uninstalling.
 

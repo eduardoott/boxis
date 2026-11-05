@@ -1,0 +1,12 @@
+{
+  "name": "boxis",
+  "description": "Claude's answers in colour-coded boxes, split by type",
+  "owner": { "name": "Eduardo Ott" },
+  "plugins": [
+    {
+      "name": "boxis",
+      "source": "./",
+      "description": "Colour-coded boxes around Claude's answers, one per part (decision, warning, scope, test, wrap-up), with checks and pins."
+    }
+  ]
+}
