@@ -142,7 +142,7 @@ async function check($: EngineInterface, ids: string[], on: boolean) {
   $.ui.invalidate('ui.render')
   if (on && ids.some(id => !before.includes(id))) celebrate($)
 }
-// A signal for other mods (Pixelband plays its burst): a state write, not a slash command, so it leaves
+// A signal other mods can listen to (to play an effect, say): a state write, not a slash command, so it leaves
 // no chat line and costs no tokens. With nobody listening, nothing happens.
 const CELEBRATE = { plugin: 'boxis', key: 'celebrate' } as const
 function celebrate($: EngineInterface) {
