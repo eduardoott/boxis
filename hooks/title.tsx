@@ -1,4 +1,4 @@
-// "client" animation: the title line as a surface module, which the app animates without
+// Animated skins: the title line as a surface module, which the app animates without
 // redrawing the rest of the screen. A dot that pulses on arrival and a check that turns into ✓.
 import type { ClientModule } from 'claude-code'
 
@@ -16,6 +16,8 @@ export type TitleProps = {
   all?: boolean
   // The box is in this session's pin list: the button left of the check shows 📌.
   pinned?: boolean
+  // With the buttons at the bottom of the box, one instance draws the title and another the buttons.
+  part: 'both' | 'title' | 'buttons'
 }
 
 // 5 pulses of 3 shades at 100 ms: below that the pulse is easy to miss.
@@ -51,7 +53,8 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
   if (props.checked) ref.waiting = false
 
   // The Client mounts while the answer is still arriving: pulse can turn true after mounting.
-  if (props.dot && props.pulse && !ref.pulsed) {
+  // The pulse belongs to the instance that draws the title; a buttons-only one never starts it.
+  if (props.part !== 'buttons' && props.dot && props.pulse && !ref.pulsed) {
     ref.pulsed = true
     ref.pulse = surface.every(DOT_BEAT_MS, () => {
       const cur = current()
@@ -90,29 +93,37 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
 
   const dot = ref.pulse && !props.checked ? DOT_FRAMES[state.step % DOT_FRAMES.length] : STILL_DOT
   const glyph = ref.check ? CHECK_FRAMES[state.frame] : props.checked || ref.waiting ? '✓' : '○'
+  const title = (
+    <Box flexShrink={1} overflow="hidden" {...(props.part === 'title' ? { width: '100%' } : {})}>
+      <Text>
+        {props.dot ? <Text color={props.color}>{`${dot} `}</Text> : null}
+        <Text color={props.color} bold={!props.dimmed} dimColor={props.dimmed}>{props.title}</Text>
+      </Text>
+    </Box>
+  )
+  const buttons = (
+    <Box flexDirection="row" gap={1} flexShrink={0} {...(props.part === 'buttons' ? { justifyContent: 'flex-end', width: '100%' } : {})}>
+      <Button key={`pin-${props.boxKey}`} label={props.pinned ? PIN.pinned : PIN.unpinned} onPress={() => surface.post({ pin: ref.boxKey, on: !props.pinned })}>
+        {props.pinned ? <Text>{PIN.pinned}</Text> : <Text dimColor>{PIN.unpinned}</Text>}
+      </Button>
+      {props.all ? (
+        <Button key={`all-${props.boxKey}`} label="all" onPress={() => surface.post({ all: true })}>
+          <Text dimColor>all</Text>
+        </Button>
+      ) : null}
+      <Button key={`check-${props.boxKey}`} label={glyph} onPress={press}>
+        {ref.check ? <Text color={props.checkColor} dimColor={DIMMED_FRAMES.includes(state.frame)}>{glyph}</Text>
+          : props.checked || ref.waiting ? <Text color={props.checkColor} bold>{glyph}</Text>
+          : <Text dimColor>{glyph}</Text>}
+      </Button>
+    </Box>
+  )
+  if (props.part === 'title') return title
+  if (props.part === 'buttons') return buttons
   return (
     <Box flexDirection="row" justifyContent="space-between" width="100%" height={1}>
-      <Box flexShrink={1} overflow="hidden">
-        <Text>
-          {props.dot ? <Text color={props.color}>{`${dot} `}</Text> : null}
-          <Text color={props.color} bold={!props.dimmed} dimColor={props.dimmed}>{props.title}</Text>
-        </Text>
-      </Box>
-      <Box flexDirection="row" gap={1} flexShrink={0}>
-        <Button key={`pin-${props.boxKey}`} label={props.pinned ? PIN.pinned : PIN.unpinned} onPress={() => surface.post({ pin: ref.boxKey, on: !props.pinned })}>
-          {props.pinned ? <Text>{PIN.pinned}</Text> : <Text dimColor>{PIN.unpinned}</Text>}
-        </Button>
-        {props.all ? (
-          <Button key={`all-${props.boxKey}`} label="all" onPress={() => surface.post({ all: true })}>
-            <Text dimColor>all</Text>
-          </Button>
-        ) : null}
-        <Button key={`check-${props.boxKey}`} label={glyph} onPress={press}>
-          {ref.check ? <Text color={props.checkColor} dimColor={DIMMED_FRAMES.includes(state.frame)}>{glyph}</Text>
-            : props.checked || ref.waiting ? <Text color={props.checkColor} bold>{glyph}</Text>
-            : <Text dimColor>{glyph}</Text>}
-        </Button>
-      </Box>
+      {title}
+      {buttons}
     </Box>
   )
 }

@@ -1,6 +1,6 @@
 import type { EngineInterface, Register, RenderSurface, UiScrollArgs } from 'claude-code'
 import { split, type BoxType } from './split'
-import { BASE, GREEN, HELP, MAX_PINS, MIN_PINS, SCREEN, TYPES, apply, mix, nextAnimation, nextColor, parseCommand, readConfig, style, summary, typeFromName, type Change, type Config } from './config'
+import { BASE, GREEN, HELP, MAX_PINS, MIN_PINS, SCREEN, TYPES, apply, mix, nextColor, nextSkin, parseCommand, readConfig, style, summary, typeFromName, type Change, type Config } from './config'
 import { columnWeights, hasTable, splitTables } from './table'
 import type { GlowProps } from './glow'
 import { PIN, type TitleProps } from './title'
@@ -13,24 +13,16 @@ const SPACE_X = 1
 // Skins gives up above this; Boxis does too: the whole answer goes into a single box.
 const MAX_SPLIT = 9000
 
-// "clock" animation: when the answer arrives, each beat lights and dims the whole box;
-// after PULSES lit beats the chain stops.
-export const PULSES = 3
-export const BEAT_MS = 400
-// How much white goes into the border and title of a lit box (0 none, 1 white).
-export const LIGHTEN = 0.35
-// How much of the type colour goes into the background of a lit box: that is what makes it "light up".
-export const LIT_FILL = 0.4
+// The types whose title carries the dot that pulses when the answer arrives.
 const PULSING_TYPES: BoxType[] = ['warning', 'decision']
 const WHITE = '#FFFFFF'
-// Frames 0 to 2*PULSES-1: even lights, odd dims. Past the last one, the chain is finished.
-const FRAMES = 2 * PULSES
+// A pulse chain past its window: frame 0 is the only one that starts the title's pulse.
 const FINISHED = -1
 // Only the latest answers that pulsed stay in the map, so it does not grow forever.
 const MAX_PULSES = 50
 // Fallback: up to this long after the turn ends, a block that missed the signature still adopts the pulse.
 const WINDOW_MS = 1000
-// "client" animation: until here the title may still start its pulse. Longer than the dot animation
+// Animated skins: until here the title may still start its pulse. Longer than the dot animation
 // and than WINDOW_MS; after it, a redraw or a remount never repeats the pulse.
 const PULSE_WINDOW_MS = 3000
 // Closing a box: its own border blinks and the background pulses with it, redrawn by the hook. The
@@ -181,7 +173,7 @@ function isLast(text: string): boolean {
   return !inTurn && trimmed.length > 0 && lastAnswer.endsWith(trimmed)
 }
 
-// Pulse of the new answer ("clock" animation), by signature of the trimmed text: turn.complete
+// Pulse of the new answer (animated skins), by signature of the trimmed text: turn.complete
 // hands the answer trimmed and the screen draws the block without its leading line breaks.
 // Memory only: an answer reopened from an old session is never here, so it does not pulse.
 type Chain = { frame: number }
@@ -194,23 +186,6 @@ function keepPulse(key: string, chain: Chain) {
     pulses.delete(old)
   }
 }
-const lit = (frame: number | undefined) => frame !== undefined && frame >= 0 && frame < FRAMES && frame % 2 === 0
-
-// One beat per clock callback: the hook that started the chain has already returned, nothing waits on it.
-function beat($: EngineInterface, chain: Chain) {
-  $.clock.after(BEAT_MS, () => {
-    try {
-      chain.frame += 1
-      // The last frame is already dim, the same as the still drawing: no redraw needed at the end.
-      if (chain.frame >= FRAMES) { chain.frame = FINISHED; return }
-      $.ui.invalidate('ui.render')
-      beat($, chain)
-    } catch {
-      chain.frame = FINISHED
-    }
-  })
-}
-
 // Fallback for when the signature misses (the block the screen draws differs from the turn.complete
 // text, which joins the blocks of the last message): a block drawn only inside the turn that fits
 // whole in the answer adopts the chain, until WINDOW_MS after the turn ends.
@@ -545,20 +520,23 @@ const TYPES_LIST = TYPES.join(', ')
 const failedTitles = new Map<string, true>()
 const failureOf = (requestId: string, element: string) => `${requestId} ${element}`
 export const titleFailed = (requestId: string, element: string) => failedTitles.has(failureOf(requestId, element))
+// With the buttons at the bottom the box has two Clients: a fault on either draws the box static.
+const boxTitleFailed = (requestId: string, i: number) => titleFailed(requestId, `title-${i}`) || titleFailed(requestId, `title-b-${i}`)
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, animation and colour per type', argumentHint: '[status | pins | pins max N | on | off | check on|off | animation none|clock|client | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
+    await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, skin, buttons and colour per type', argumentHint: '[status | pins | pins max N | on | off | check on|off | skin none|animated-i|animated-ii | buttons top|bottom | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
     await $.tool.register({
       name: 'design',
-      description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (enabled), the ✓ button that marks a box as understood (check), the animation of the boxes on arrival (animation: none, clock, client), background intensity (intensity, 0 to 100), light or dark screen (light), pins kept per session (maxPins, 1 to 10) and, per type, the border and title colour (color) and the background colour (background). Types: ${TYPES_LIST}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
+      description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (enabled), the ✓ button that marks a box as understood (check), the skin, which is the look and effects of the boxes (skin: none, animated-i, animated-ii), where the pin and check buttons sit (buttons: top, bottom), background intensity (intensity, 0 to 100), light or dark screen (light), pins kept per session (maxPins, 1 to 10) and, per type, the border and title colour (color) and the background colour (background). Types: ${TYPES_LIST}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
       inputSchema: {
         type: 'object',
         properties: {
           enabled: { type: 'boolean', description: 'Boxes on (true) or off (false).' },
           check: { type: 'boolean', description: 'Shows the ✓ button that marks a box as understood.' },
-          animation: { type: 'string', enum: ['none', 'clock', 'client'], description: 'Animation of the warning and decision boxes when the answer arrives.' },
+          skin: { type: 'string', enum: ['none', 'animated-i', 'animated-ii'], description: 'Look and effects of the boxes: none is plain, animated-i and animated-ii animate the title line on arrival and on check.' },
+          buttons: { type: 'string', enum: ['top', 'bottom'], description: 'The pin and check buttons at the top right or the bottom right of the box.' },
           intensity: { type: 'number', minimum: 0, maximum: 100, description: 'Background intensity, 0 (no background) to 100 (strong background).' },
           types: {
             type: 'object',
@@ -615,9 +593,8 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // A new answer: with the "clock" animation, its warning and decision boxes pulse and stop.
-  // With "client" the title pulses: here it only opens the window, with one redraw and no beats.
-  // The mod only observes: it always returns next(e), and each beat is a clock callback.
+  // A new answer: with an animated skin the title pulses. Here it only opens the window, with one
+  // redraw and no beats. The mod only observes: it always returns next(e).
   on('turn.complete', async ($, e, next) => {
     if (e.agentId) return next(e)
     inTurn = false
@@ -627,21 +604,20 @@ export const register: Register = on => {
         lastAnswer = text
         $.ui.invalidate('ui.render')
       }
-      const animation = (await current($)).animation
-      if (text && (animation === 'clock' || animation === 'client')) {
+      const skin = (await current($)).skin
+      if (text && skin !== 'none') {
         const chain: Chain = { frame: 0 }
         keepPulse(signature(text), chain)
         latest = { text, chain }
         $.clock.after(WINDOW_MS, () => { if (latest?.chain === chain) latest = null })
         $.ui.invalidate('ui.render')
-        if (animation === 'clock') beat($, chain)
-        else $.clock.after(PULSE_WINDOW_MS, () => { chain.frame = FINISHED })
+        $.clock.after(PULSE_WINDOW_MS, () => { chain.frame = FINISHED })
       }
     } catch {}
     return next(e)
   })
 
-  // The title's check ("client" animation) posts "closing" on the click and "checked" after the frames.
+  // The title's check (animated skins) posts "closing" on the click and "checked" after the frames.
   on('ui.message', async ($, e, next) => {
     const data = e.data as { checked?: unknown; closing?: unknown; all?: unknown; pin?: unknown; on?: unknown } | null
     if (!e.element.startsWith('title-') || !data || typeof data !== 'object') return next(e)
@@ -700,7 +676,8 @@ export const register: Register = on => {
           <Button key="pins-up" label="+" onPress={go({ maxPins: Math.min(MAX_PINS, cfg.maxPins + 1) })} />
           <Button key="screen" label={cfg.light ? 'light screen' : 'dark screen'} onPress={go({ light: !cfg.light })} />
           <Button key="check" label={cfg.check ? 'check on' : 'check off'} onPress={go({ check: !cfg.check })} />
-          <Button key="animation" label={`animation: ${cfg.animation}`} onPress={go({ animation: nextAnimation(cfg.animation) })} />
+          <Button key="skin" label={`skin: ${cfg.skin}`} onPress={go({ skin: nextSkin(cfg.skin) })} />
+          <Button key="buttons" label={`buttons: ${cfg.buttons}`} onPress={go({ buttons: cfg.buttons === 'top' ? 'bottom' : 'top' })} />
         </Box>
         {TYPES.map(row)}
         <Box flexDirection="row" gap={1}>
@@ -798,7 +775,6 @@ export const register: Register = on => {
     const marks = await readChecked($)
     // The summary between two tools is not the answer: it never pulses.
     const pulse = e.props.isSummary ? undefined : pulseOf(e.props.text)
-    const frame = cfg.animation === 'clock' ? pulse?.frame : undefined
     const id = signature(e.props.text)
     const idOf = (i: number) => `${id}:${i}`
     const isChecked = (i: number) => cfg.check && marks.includes(idOf(i))
@@ -826,16 +802,8 @@ export const register: Register = on => {
         </Button>
       )
       const marked = isChecked(i)
-      const pulses = !marked && lit(frame) && PULSING_TYPES.includes(type)
-      const base = marked ? { ...v, color: GREEN, background: mix(cfg.light ? SCREEN.light : SCREEN.dark, GREEN, 0.2) }
-        : pulses ? {
-          ...v,
-          color: mix(v.color, WHITE, LIGHTEN),
-          background: mix(v.background ?? (cfg.light ? SCREEN.light : SCREEN.dark), v.color, LIT_FILL),
-          // The border gets thicker without changing size; one already thick becomes double.
-          border: v.border === 'bold' ? 'double' : 'bold',
-        } : v
-      const onClient = cfg.check && cfg.animation === 'client' && Client && !titleFailed(e.requestId, `title-${i}`)
+      const base = marked ? { ...v, color: GREEN, background: mix(cfg.light ? SCREEN.light : SCREEN.dark, GREEN, 0.2) } : v
+      const onClient = cfg.check && cfg.skin !== 'none' && Client && !boxTitleFailed(e.requestId, i)
       const closes = onClient && closing.has(idOf(i))
       const litBorder = closes && closing.get(idOf(i)) === true
       const c = closes ? {
@@ -854,42 +822,49 @@ export const register: Register = on => {
       const glows = lap && !(thin && faint)
       const dimmed = marked || faint
       const title = <Text color={c.color} bold={!dimmed} dimColor={dimmed}>{c.title ?? ''}</Text>
+      const bottom = cfg.buttons === 'bottom'
+      const titleProps = {
+        title: c.title ?? '',
+        color: c.color,
+        dimmed,
+        checked: marked,
+        checkColor: GREEN,
+        // Still or reopened, the box keeps the dot's place: the title does not shift.
+        dot: PULSING_TYPES.includes(type),
+        pulse: startPulse,
+        boxKey: idOf(i),
+        all: allOn(i),
+        pinned: isPinned,
+      }
+      const client = (key: string, part: TitleProps['part']) => (
+        <Client key={key} module="./title.tsx" width="100%" height={1} props={{ ...titleProps, part } satisfies TitleProps} />
+      )
+      const buttons = (
+        <Box key={`buttons-${i}`} flexDirection="row" gap={1} {...(bottom ? { justifyContent: 'flex-end' } : { flexShrink: 0 })}>
+          {pin}
+          {allOn(i) ? (
+            <Button key={`all-${i}`} label="all" onPress={() => attempt($, checkAll($), 'the check marks')}>
+              <Text dimColor>all</Text>
+            </Button>
+          ) : null}
+          {cfg.check ? (
+            <Button key={`check-${i}`} label={marked ? '✓' : '○'} onPress={() => attempt($, check($, [idOf(i)], !marked), 'the check marks')}>
+              <Text color={marked ? GREEN : undefined} bold={marked} dimColor={!marked}>{marked ? '✓' : '○'}</Text>
+            </Button>
+          ) : null}
+        </Box>
+      )
       return (
         <Box key={`box-${i}`} flexDirection="column" borderStyle={c.border} borderColor={borderColor} backgroundColor={c.background}
           paddingX={SPACE_X} paddingY={faint ? 0 : SPACE_Y}>
-          {onClient ? (
-            <Client key={`title-${i}`} module="./title.tsx" width="100%" height={1} props={{
-              title: c.title ?? '',
-              color: c.color,
-              dimmed,
-              checked: marked,
-              checkColor: GREEN,
-              // Still or reopened, the box keeps the dot's place: the title does not shift.
-              dot: PULSING_TYPES.includes(type),
-              pulse: startPulse,
-              boxKey: idOf(i),
-              all: allOn(i),
-              pinned: isPinned,
-            } satisfies TitleProps} />
-          ) : (
+          {onClient ? client(`title-${i}`, bottom ? 'title' : 'both') : (
             <Box key={`top-${i}`} flexDirection="row" justifyContent="space-between">
               {title}
-              <Box flexDirection="row" gap={1} flexShrink={0}>
-                {pin}
-                {allOn(i) ? (
-                  <Button key={`all-${i}`} label="all" onPress={() => attempt($, checkAll($), 'the check marks')}>
-                    <Text dimColor>all</Text>
-                  </Button>
-                ) : null}
-                {cfg.check ? (
-                  <Button key={`check-${i}`} label={marked ? '✓' : '○'} onPress={() => attempt($, check($, [idOf(i)], !marked), 'the check marks')}>
-                    <Text color={marked ? GREEN : undefined} bold={marked} dimColor={!marked}>{marked ? '✓' : '○'}</Text>
-                  </Button>
-                ) : null}
-              </Box>
+              {bottom ? null : buttons}
             </Box>
           )}
           {inside}
+          {bottom ? (onClient ? client(`title-b-${i}`, 'buttons') : buttons) : null}
           {/* Last: it paints over the border and the content. */}
           {onClient && glows ? (['top', 'bottom'] as const).map(side => (
             <Box key={`rim-${side}-${i}`} position="absolute" left={outside} right={outside} height={1} {...(side === 'top' ? { top: outside } : { bottom: outside })}>

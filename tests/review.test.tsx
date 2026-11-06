@@ -253,17 +253,23 @@ test('fence of 4: split, table and strikethrough do not treat the inner fence as
 
 // 6. Dead code.
 
-test('animation: a saved svg reads as none, and the pane button cycles only the three', async ($, on) => {
-  expect(readConfig({ animation: 'svg' }).animation).toBe('none')
-  expect('error' in apply(DEFAULTS, { animation: 'svg' })).toBe(true)
+test('skin: a saved svg animation reads as none, and the pane buttons cycle the three skins and toggle the buttons', async ($, on) => {
+  expect(readConfig({ animation: 'svg' }).skin).toBe('none')
+  expect('error' in apply(DEFAULTS, { skin: 'svg' })).toBe(true)
   world(on)
   const ui = await pane($, 'boxis-config')
   const labels = []
   for (let i = 0; i < 4; i++) {
-    labels.push((await ui.find({ type: 'Button', key: 'animation' }))?.text)
-    await ui.press({ key: 'animation' })
+    labels.push((await ui.find({ type: 'Button', key: 'skin' }))?.text)
+    await ui.press({ key: 'skin' })
   }
-  expect(labels).toEqual(['animation: none', 'animation: clock', 'animation: client', 'animation: none'])
+  expect(labels).toEqual(['skin: none', 'skin: animated-i', 'skin: animated-ii', 'skin: none'])
+  const positions = []
+  for (let i = 0; i < 3; i++) {
+    positions.push((await ui.find({ type: 'Button', key: 'buttons' }))?.text)
+    await ui.press({ key: 'buttons' })
+  }
+  expect(positions).toEqual(['buttons: top', 'buttons: bottom', 'buttons: top'])
   await ui.unmount()
 })
 
@@ -334,4 +340,7 @@ test('ui.fault on the Client title: that answer\'s box falls back to the plain t
   // A failing glow does not count: only the title has a plain line to fall back to.
   await hooks['ui.fault']({}, { ...fault, element: 'rim-top-1' }, next)
   expect(titleFailed('mf', 'rim-top-1')).toBe(false)
+  // The buttons Client of a box with the buttons at the bottom counts as a title too.
+  await hooks['ui.fault']({}, { ...fault, element: 'title-b-2' }, next)
+  expect(titleFailed('mf', 'title-b-2')).toBe(true)
 })

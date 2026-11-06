@@ -35,7 +35,7 @@ A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without 
 
 ## Commands and the colour pane
 
-`/boxis` opens the colour pane: per type, ◀ ▶ step the border colour and a button turns the background on or off; the top row sets on/off, background intensity, max pins, light or dark screen, the ✓ check and the animation. Changes apply to every session; other open windows pick them up on their next session start or pin.
+`/boxis` opens the colour pane: per type, ◀ ▶ step the border colour and a button turns the background on or off; the top row sets on/off, background intensity, max pins, light or dark screen, the ✓ check, the skin and the position of the buttons. Changes apply to every session; other open windows pick them up on their next session start or pin.
 
 ```
 /boxis status                    the config as text
@@ -45,13 +45,22 @@ A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without 
 /boxis background <type> #RRGGBB fixed background (none removes it)
 /boxis screen light | dark       backgrounds for a light or a dark screen
 /boxis check on | off            the ✓ button
-/boxis animation none|clock|client
+/boxis skin none|animated-i|animated-ii   look and effects of the boxes
+/boxis buttons top|bottom        the pin and check buttons at the top right or the bottom right of the box
 /boxis pins                      opens the Pins pane
 /boxis pins max 1-10             pins kept per session (default 5)
 /boxis default                   every colour and the intensity back to the original (the pin limit stays)
 ```
 
 Claude can make the same changes through the `design` tool, for example "make the warning box orange".
+
+### Boxis skins
+
+- **None**: plain boxes, no effects.
+- **Animated I**: the title line is animated. A dot pulses on arrival, a glow runs along the border, the ✓ fills up on click and the box blinks while closing.
+- **Animated II**: reserved; the same as Animated I for now.
+
+`/boxis skin animated i` and `/boxis skin Animated II` work too. The old `/boxis animation` command still works as an alias: `client` and `clock` set Animated I, `none` sets None. A config saved by an older version maps the same way.
 
 ## Check
 

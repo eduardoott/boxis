@@ -28,7 +28,7 @@ function world(on: On, start: Record<string, unknown>) {
 }
 
 test('config: the real legacy store reads as the current shape', () => {
-  expect(readConfig(LEGACY_STORE.config)).toEqual({ ...DEFAULTS, animation: 'client' })
+  expect(readConfig(LEGACY_STORE.config)).toEqual({ ...DEFAULTS, skin: 'animated-i' })
 })
 
 test('config: every legacy field, type key and value maps to the current one', () => {
@@ -37,10 +37,11 @@ test('config: every legacy field, type key and value maps to the current one', (
     tipos: { aviso: { cor: '#112233', fundo: 'nenhum' }, sobreVoce: { fundo: '#445566' }, fechamento: { cor: '#778899' }, banana: { cor: '#000000' } },
   }
   expect(readConfig(legacy)).toEqual({
-    enabled: false, intensity: 30, light: true, check: false, animation: 'clock', maxPins: 5,
+    enabled: false, intensity: 30, light: true, check: false, skin: 'animated-i', buttons: 'top', maxPins: 5,
     types: { warning: { color: '#112233', background: 'none' }, 'about-you': { background: '#445566' }, 'wrap-up': { color: '#778899' } },
   })
-  expect(readConfig({ animacao: 'nenhuma' }).animation).toBe('none')
+  expect(readConfig({ animacao: 'nenhuma' }).skin).toBe('none')
+  expect(readConfig({ animacao: 'relogio' }).skin).toBe('animated-i')
 })
 
 test('config: a current key wins over its legacy name, entry by entry', () => {
@@ -52,7 +53,7 @@ test('config: a current key wins over its legacy name, entry by entry', () => {
 })
 
 test('config: the current shape reads back unchanged', () => {
-  const current = { enabled: false, intensity: 20, light: true, check: true, animation: 'clock', maxPins: 3, types: { decision: { color: '#ABCDEF', background: 'none' } } }
+  const current = { enabled: false, intensity: 20, light: true, check: true, skin: 'animated-ii', buttons: 'bottom', maxPins: 3, types: { decision: { color: '#ABCDEF', background: 'none' } } }
   expect(readConfig(current)).toEqual(current)
 })
 
@@ -93,6 +94,6 @@ test('store: a legacy store draws its check marks and pins, and the next writes 
 
   const cfg = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'Pane', requestId: 'boxis-config', props: {} } as never)
   await cfg.press({ key: 'intensity-up' })
-  expect(disk.config).toEqual({ enabled: true, intensity: 60, light: false, check: true, animation: 'none', maxPins: 5, types: {} })
+  expect(disk.config).toEqual({ enabled: true, intensity: 60, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, types: {} })
   await cfg.unmount()
 })

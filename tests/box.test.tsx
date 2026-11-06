@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { SCREEN, readConfig, mix, style } from '../hooks/config'
-import { LIT_FILL, BEAT_MS, LIGHTEN, CLOSE_MS, BLINKS, BLINK_MS, PULSES } from '../hooks/register'
+import { DEFAULTS } from '../hooks/config'
+import { CLOSE_MS, BLINKS, BLINK_MS } from '../hooks/register'
 import { columnAt, glyph } from '../hooks/glow'
 import { DOT_BEAT_MS, DOT_PULSES, CHECK_FRAMES, DOT_FRAMES, FRAME_MS } from '../hooks/title'
 
@@ -195,12 +195,10 @@ test('if the drawing below fails, the whole answer still comes out in a single b
   }
 })
 
-// "clock" animation: only the answer that just arrived pulses its warning and decision boxes.
-// The code block in the body makes the drawing below be asked for on each redraw, so it can be counted.
+// Only the answer that just arrived pulses (animated skins). The code block in the body makes the
+// drawing below be asked for on each redraw, so it can be counted.
 const PULSING = 'Body.\n\n```bash\necho hi\n```\n\n⚠️ Careful with X.\n\n❓ Do A?\n\n✅ Done: x. ➡️ Next: y.'
-const lit = (color: string) => mix(color, '#FFFFFF', LIGHTEN)
 const NORMAL = ['#7F77DD', '#E0B040', '#4A90E2', '#5CB85C']
-const LIT = ['#7F77DD', lit('#E0B040'), lit('#4A90E2'), '#5CB85C']
 const turnEnd = (answer: string) => ({ answer, reason: 'answer' as const, durationMs: 10, isAborted: false, turnId: 't1' })
 
 function pulseWorld(on: On, config: Record<string, unknown>) {
@@ -218,70 +216,17 @@ function pulseWorld(on: On, config: Record<string, unknown>) {
 type Mounted = { findAll: (q: { type: string }) => Promise<{ props: Record<string, unknown> }[]> }
 const bordersOf = async (ui: Mounted) => (await ui.findAll({ type: 'Box' })).filter(b => b.props.borderStyle).map(b => b.props.borderColor)
 
-test('clock: the answer that just arrived pulses warning and decision 3 times and stops', async ($, on) => {
-  const { clock, count } = pulseWorld(on, { animation: 'clock' })
-  const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text: PULSING, isFirstOfReply: true } })
-  const borders = () => bordersOf(ui)
-  // Without turn.complete it is a reopened answer: the usual colours.
-  expect(await borders()).toEqual(NORMAL)
-  await clock.advance(10 * BEAT_MS)
-  expect(await borders()).toEqual(NORMAL)
-
-  expect(await $.turn.complete(turnEnd(PULSING))).toEqual({ text: PULSING })
-  expect(await borders()).toEqual(LIT)
-  // Lit, the whole box lights up: background pulled to the type colour and a thicker border.
-  const boxOf = async (color: string) => (await ui.findAll({ type: 'Box' })).find(b => b.props.borderColor === color)
-  const warning = style(readConfig({ animation: 'clock' }), 'warning')
-  const litWarning = await boxOf(lit('#E0B040'))
-  expect(litWarning?.props.backgroundColor).toBe(mix(warning.background ?? SCREEN.dark, warning.color, LIT_FILL))
-  expect(litWarning?.props.borderStyle).toBe('bold')
-  expect((await boxOf(lit('#4A90E2')))?.props.borderStyle).toBe('double')
-  expect((await ui.find({ type: 'Text', text: /^warning$/ }))?.props.color).toBe(lit('#E0B040'))
-  expect((await ui.find({ type: 'Text', text: /^your call$/ }))?.props.color).toBe(lit('#4A90E2'))
-  expect((await ui.find({ type: 'Text', text: /^wrap-up$/ }))?.props.color).toBe('#5CB85C')
-  // Frame 1 dims, 2 lights, ... 5 dims: PULSES lit frames in all.
-  for (let beat = 1; beat < 2 * PULSES; beat++) {
-    await clock.advance(BEAT_MS)
-    expect(await borders()).toEqual(beat % 2 ? NORMAL : LIT)
-  }
-  expect((await ui.find({ type: 'Text', text: /^warning$/ }))?.props.color).toBe('#E0B040')
-  expect((await boxOf('#E0B040'))?.props.backgroundColor).toBe(warning.background)
-  expect((await boxOf('#E0B040'))?.props.borderStyle).toBe('round')
-  // After the last frame the chain stops: no new colour, no redraw.
-  const before = count.draws
-  await clock.advance(BEAT_MS)
-  expect(await borders()).toEqual(NORMAL)
-  await clock.advance(10 * BEAT_MS)
-  expect(await borders()).toEqual(NORMAL)
-  expect(count.draws).toBe(before)
-  await ui.unmount()
-})
-
-test('clock: a box checked as understood stays green and still in the middle of the pulse', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'clock' })
-  const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text: PULSING, isFirstOfReply: true } })
-  await $.turn.complete(turnEnd(PULSING))
-  expect(await bordersOf(ui)).toEqual(LIT)
-  await ui.press({ key: 'check-1' })
-  expect(await bordersOf(ui)).toEqual(['#7F77DD', '#5CB85C', lit('#4A90E2'), '#5CB85C'])
-  await clock.advance(BEAT_MS)
-  expect(await bordersOf(ui)).toEqual(['#7F77DD', '#5CB85C', '#4A90E2', '#5CB85C'])
-  await clock.advance(BEAT_MS)
-  expect(await bordersOf(ui)).toEqual(['#7F77DD', '#5CB85C', lit('#4A90E2'), '#5CB85C'])
-  expect((await ui.find({ type: 'Text', text: /^warning$/ }))?.props.color).toBe('#5CB85C')
-  await ui.unmount()
-})
-
-// 'svg' was retired: a saved one reads as none.
-for (const animation of ['none', 'svg']) {
-  test(`animation ${animation === 'svg' ? 'svg saved (reads as none)' : animation}: the turn end redraws only once (the "check all" moves to the new answer), nothing pulses`, async ($, on) => {
-    const { clock, count } = pulseWorld(on, { animation })
+// The retired 'svg' animation and the old key: a saved one reads as skin none.
+for (const config of [{ skin: 'none' }, { animation: 'svg' }]) {
+  test(`${'skin' in config ? 'skin none' : 'animation svg saved (reads as none)'}: the turn end redraws only once (the "check all" moves to the new answer), nothing pulses`, async ($, on) => {
+    const { clock, count } = pulseWorld(on, config)
     const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text: PULSING, isFirstOfReply: true } })
     const before = count.draws
     expect(await $.turn.complete(turnEnd(PULSING))).toEqual({ text: PULSING })
     expect(await bordersOf(ui)).toEqual(NORMAL)
-    for (let beat = 1; beat <= 2 * PULSES; beat++) {
-      await clock.advance(BEAT_MS)
+    expect(await ui.find({ type: 'Client' })).toBeUndefined()
+    for (let beat = 1; beat <= 6; beat++) {
+      await clock.advance(400)
       expect(await bordersOf(ui)).toEqual(NORMAL)
     }
     expect(count.draws).toBe(before + 1)
@@ -289,41 +234,7 @@ for (const animation of ['none', 'svg']) {
   })
 }
 
-test('clock: a block with a trailing line break still matches the turn answer', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'clock' })
-  const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text: `${PULSING}\n\n`, isFirstOfReply: true } })
-  expect(await bordersOf(ui)).toEqual(NORMAL)
-  await $.turn.complete(turnEnd(PULSING))
-  expect(await bordersOf(ui)).toEqual(LIT)
-  await clock.advance(BEAT_MS)
-  expect(await bordersOf(ui)).toEqual(NORMAL)
-  await ui.unmount()
-})
-
-test('clock, fallback: a new block that only fits the turn answer adopts the pulse; the history does not', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'clock' })
-  const mount = (text: string) => $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text, isFirstOfReply: true } })
-  const BLOCK = '⚠️ Careful with X.\n\n❓ Do A?'
-  // History drawn on opening the session, outside a turn: it fits the new answer, but does not pulse.
-  const old = await mount('❓ Do A?')
-  await $.turn.start({ text: 'hi', turnId: 't1' })
-  // The new block is drawn inside the turn; the turn.complete answer joins another block before it.
-  const fresh = await mount(BLOCK)
-  expect(await bordersOf(fresh)).toEqual(['#E0B040', '#4A90E2'])
-  await $.turn.complete(turnEnd(`Text before.\n${BLOCK}`))
-  expect(await bordersOf(fresh)).toEqual([lit('#E0B040'), lit('#4A90E2')])
-  expect(await bordersOf(old)).toEqual(['#4A90E2'])
-  await clock.advance(BEAT_MS)
-  expect(await bordersOf(fresh)).toEqual(['#E0B040', '#4A90E2'])
-  // Past the 1 s window, a block that never showed no longer adopts, even with the chain lit.
-  await clock.advance(3 * BEAT_MS)
-  expect(await bordersOf(fresh)).toEqual([lit('#E0B040'), lit('#4A90E2')])
-  const late = await mount('⚠️ Careful with X.')
-  expect(await bordersOf(late)).toEqual(['#E0B040'])
-  for (const ui of [old, fresh, late]) await ui.unmount()
-})
-
-// "client" animation: the title line becomes a surface module (hooks/title.tsx).
+// Animated skins: the title line becomes a surface module (hooks/title.tsx).
 // Boxes of PULSING: 0 body, 1 warning, 2 decision, 3 wrap-up.
 const mountClient = ($: { ui: { mount: (a: never) => Promise<any> } }, text = PULSING, surface = 'desktop') =>
   $.ui.mount({ plugin: 'boxis', surface, component: 'AssistantMessage', props: { text, isFirstOfReply: true } } as never)
@@ -335,8 +246,9 @@ const checkOf = async (ui: any, key: string) => (await ui.findAll({ type: 'Text'
 const dotOf = async (ui: any, key: string) => (await ui.find({ type: 'Text', text: /^[◦◉●] $/, in: key }))?.text
 const COLUMNS = 40
 
-test('client: one Client per box, a dot only on warning and decision, and no Button', async ($, on) => {
-  pulseWorld(on, { animation: 'client' })
+// Both animated skins draw the Client title; animated-ii has no effects of its own yet.
+for (const skin of ['animated-i', 'animated-ii']) test(`${skin}: one Client per box, a dot only on warning and decision, and no Button`, async ($, on) => {
+  pulseWorld(on, { skin })
   const ui = await mountClient($)
   expect(await ui.find({ type: 'Button' })).toBeUndefined()
   const found = await ui.findAll({ type: 'Client' })
@@ -344,6 +256,7 @@ test('client: one Client per box, a dot only on warning and decision, and no But
   expect(found.map((c: any) => c.key)).toEqual(['title-0', 'title-1', 'title-2', 'title-3'])
   expect(found.every((c: any) => c.props.height === 1 && c.props.width === '100%')).toBe(true)
   const props = await clients(ui)
+  expect(props.every((p: any) => p.part === 'both')).toBe(true)
   expect(props.map((p: any) => p.dot)).toEqual([false, true, true, false])
   expect(props.map((p: any) => p.checked)).toEqual([false, false, false, false])
   expect(props.map((p: any) => p.title)).toEqual(['', 'warning', 'your call', 'wrap-up'])
@@ -354,7 +267,7 @@ test('client: one Client per box, a dot only on warning and decision, and no But
 })
 
 test('client: still, the module draws the title and the ○ as the static line does', async ($, on) => {
-  pulseWorld(on, { animation: 'client' })
+  pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   const title = await ui.find({ type: 'Text', text: /^warning$/, in: 'title-1' })
@@ -370,7 +283,7 @@ test('client: still, the module draws the title and the ○ as the static line d
 })
 
 test('client: only the new answer pulses, only warning and decision, and the window closes without a redraw', async ($, on) => {
-  const { clock, count } = pulseWorld(on, { animation: 'client' })
+  const { clock, count } = pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   // Without turn.complete it is a reopened answer.
   expect(await pulsing(ui)).toEqual([false, false, false, false])
@@ -394,7 +307,7 @@ test('client: only the new answer pulses, only warning and decision, and the win
 })
 
 test('client: the dot plays its pulses and stops, even when pulse arrives after mounting', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'client' })
+  const { clock } = pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   expect(await dotOf(ui, 'title-1')).toBe('● ')
@@ -421,7 +334,7 @@ test('client: the dot plays its pulses and stops, even when pulse arrives after 
 })
 
 test('client: a click on ○ plays the frames, checks once and the box turns green', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'client' })
+  const { clock } = pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   await ui.press({ key: `check-${(await clients(ui))[1].boxKey}`, in: 'title-1' })
@@ -447,7 +360,7 @@ test('client: a click on ○ plays the frames, checks once and the box turns gre
 })
 
 test('client: a click outside the check does nothing', async ($, on) => {
-  pulseWorld(on, { animation: 'client' })
+  pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   await ui.pointer({ type: 'down', x: COLUMNS - 4, y: 0, button: 'left', in: 'title-1' })
@@ -458,7 +371,7 @@ test('client: a click outside the check does nothing', async ($, on) => {
 })
 
 test('client: closing blinks the border 6 times through the hook, pulses the background, mounts the glow and goes back to normal', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'client' })
+  const { clock } = pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   const background = async () => (await ui.findAll({ type: 'Box' })).filter((b: any) => b.props.borderStyle)[1].props.backgroundColor
   const still = await background()
@@ -489,7 +402,7 @@ test('client: closing blinks the border 6 times through the hook, pulses the bac
 })
 
 test('client: the new answer gets one glow lap, only on warning and decision', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'client' })
+  const { clock } = pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   expect(await glows(ui)).toEqual([])
   await $.turn.complete(turnEnd(PULSING))
@@ -510,7 +423,7 @@ test('glow: the lap runs along the top and back along the bottom, with the right
 })
 
 test('client: a click on a checked box unchecks with no frames, and the old ✓ does not come back', async ($, on) => {
-  const { clock } = pulseWorld(on, { animation: 'client' })
+  const { clock } = pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   await ui.press({ key: `check-${(await clients(ui))[1].boxKey}`, in: 'title-1' })
@@ -525,7 +438,7 @@ test('client: a click on a checked box unchecks with no frames, and the old ✓ 
 })
 
 test('client: ui.message with checked and on marks and it persists; malformed data changes nothing', async ($, on) => {
-  pulseWorld(on, { animation: 'client' })
+  pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($)
   const key = (await clients(ui))[2].boxKey
   await ui.post({ checked: key, on: true }, { in: 'title-2' })
@@ -541,7 +454,7 @@ test('client: ui.message with checked and on marks and it persists; malformed da
 })
 
 test('client with check off: the static title, no Client, only the pin', async ($, on) => {
-  pulseWorld(on, { animation: 'client', check: false })
+  pulseWorld(on, { skin: 'animated-i', check: false })
   const ui = await mountClient($)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'pin-1', 'pin-2', 'pin-3'])
@@ -550,7 +463,7 @@ test('client with check off: the static title, no Client, only the pin', async (
 })
 
 test('client on a surface without Client: the static Button', async ($, on) => {
-  pulseWorld(on, { animation: 'client' })
+  pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($, PULSING, 'vscode')
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'check-0', 'pin-1', 'check-1', 'pin-2', 'check-2', 'pin-3', 'check-3'])
@@ -558,12 +471,68 @@ test('client on a surface without Client: the static Button', async ($, on) => {
 })
 
 test('client in the terminal: the module mounts and the check plays its frames', async ($, on) => {
-  pulseWorld(on, { animation: 'client' })
+  pulseWorld(on, { skin: 'animated-i' })
   const ui = await mountClient($, PULSING, 'terminal')
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   await ui.press({ key: `check-${(await clients(ui))[1].boxKey}`, in: 'title-1' })
   await ui.advance(FRAME_MS)
   expect((await checkOf(ui, 'title-1'))?.text).toBe(CHECK_FRAMES[1])
+  await ui.unmount()
+})
+
+// buttons: bottom. The title row keeps only the title; the pin and check go in a row after the content.
+const PLAIN = 'Body.\n\n⚠️ Careful with X.\n\n✅ Done: x. ➡️ Next: y.'
+// A found Box carries its children: the kinds of the direct children of the box with that key.
+const kindsIn = async (ui: any, key: string) => ((await ui.find({ type: 'Box', key }))?.children ?? []).map((c: any) => c.props?.key ?? c.type)
+const buttonsIn = async (ui: any, key: string) => ((await ui.find({ type: 'Box', key }))?.children ?? []).filter((c: any) => c.type === 'Button').map((c: any) => c.props.key)
+
+test('buttons bottom, static: the title row has no Button; the pin and check come after the content', async ($, on) => {
+  pulseWorld(on, { buttons: 'bottom' })
+  expect(DEFAULTS.buttons).toBe('top')
+  const ui = await mountClient($, PLAIN)
+  expect(await ui.find({ type: 'Client' })).toBeUndefined()
+  // The title row holds only the title; the buttons row comes after the content, right aligned.
+  for (const i of [0, 1, 2]) {
+    expect(await kindsIn(ui, `top-${i}`)).toEqual(['Text'])
+    expect(await kindsIn(ui, `box-${i}`)).toEqual([`top-${i}`, 'Markdown', `buttons-${i}`])
+    expect(await buttonsIn(ui, `buttons-${i}`)).toEqual([`pin-${i}`, `check-${i}`])
+  }
+  expect((await ui.find({ type: 'Box', key: 'top-1' }))?.text).toBe('warning')
+  expect((await ui.find({ type: 'Box', key: 'buttons-1' }))?.props.justifyContent).toBe('flex-end')
+  expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'check-0', 'pin-1', 'check-1', 'pin-2', 'check-2'])
+  // The check still works from the bottom row.
+  await ui.press({ key: 'check-1' })
+  expect((await ui.findAll({ type: 'Markdown' })).filter((m: any) => m.props.dimColor).map((m: any) => m.props.text)).toEqual(['~~Careful with X.~~'])
+  await ui.unmount()
+})
+
+test('buttons bottom, animated skin: two Clients per box, the title on top and the buttons after the content', async ($, on) => {
+  const { clock } = pulseWorld(on, { skin: 'animated-i', buttons: 'bottom' })
+  const ui = await mountClient($, PLAIN)
+  expect(await ui.find({ type: 'Button' })).toBeUndefined()
+  const found = await ui.findAll({ type: 'Client' })
+  expect(found.map((c: any) => c.key)).toEqual(['title-0', 'title-b-0', 'title-1', 'title-b-1', 'title-2', 'title-b-2'])
+  expect(found.every((c: any) => c.props.height === 1 && c.props.width === '100%')).toBe(true)
+  expect(found.map((c: any) => c.props.props.part)).toEqual(['title', 'buttons', 'title', 'buttons', 'title', 'buttons'])
+  for (const i of [0, 1, 2]) expect(await kindsIn(ui, `box-${i}`)).toEqual([`title-${i}`, 'Markdown', `title-b-${i}`])
+  // The pair shares the box key and the dot.
+  const pair = found.filter((c: any) => c.key.endsWith('-1')).map((c: any) => c.props.props)
+  expect(pair[0].boxKey).toBe(pair[1].boxKey)
+  expect(pair.map((p: any) => p.dot)).toEqual([true, true])
+  // Each part draws only its half: the dot and title on top, the buttons at the bottom.
+  await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
+  await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-b-1' })
+  expect(await dotOf(ui, 'title-1')).toBe('● ')
+  expect(await ui.find({ type: 'Button', in: 'title-1' })).toBeUndefined()
+  expect(await dotOf(ui, 'title-b-1')).toBeUndefined()
+  expect((await ui.findAll({ type: 'Button', in: 'title-b-1' })).map((b: any) => b.key)).toEqual([`pin-${pair[1].boxKey}`, `check-${pair[1].boxKey}`])
+  // The check plays its frames in the buttons instance and the box turns green.
+  await ui.press({ key: `check-${pair[1].boxKey}`, in: 'title-b-1' })
+  await ui.advance(FRAME_MS * CHECK_FRAMES.length)
+  await clock.advance(CLOSE_MS)
+  expect((await clients(ui))[2].checked).toBe(true)
+  expect((await clients(ui))[3].checked).toBe(true)
+  expect(await bordersOf(ui)).toEqual(['#7F77DD', '#5CB85C', '#5CB85C'])
   await ui.unmount()
 })
 

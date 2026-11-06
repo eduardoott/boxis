@@ -6,7 +6,7 @@ description: Changes the look of the Boxis mod (colour-coded boxes around Claude
 # Adjusting Boxis
 
 The mod has one tool, `mcp__boxis__design`, and each change shows on screen as soon as it returns.
-By hand: `/boxis` opens the colour panel (◀ ▶ buttons per type, intensity, max pins, light/dark screen); `/boxis status` shows it as text. The colours belong to Boxis itself and do not depend on the Skins skin.
+By hand: `/boxis` opens the colour panel (◀ ▶ buttons per type, intensity, max pins, light/dark screen, skin, buttons); `/boxis status` shows it as text. The colours belong to Boxis itself and do not depend on the Skins skin.
 
 ## Box types
 
@@ -28,7 +28,8 @@ By hand: `/boxis` opens the colour panel (◀ ▶ buttons per type, intensity, m
 - `intensity` (0 to 100, default 50): how much of the border colour goes into the background. 0 removes all automatic backgrounds.
 - `light`: true when the screen is light; backgrounds lighten instead of darken.
 - `check`: shows the ✓ button that marks a box as understood.
-- `animation`: `none`, `clock` or `client`.
+- `skin`: `none` (plain boxes), `animated-i` (the title line animated: a dot pulses on arrival, a glow runs along the border, the ✓ fills up on click and the box blinks while closing) or `animated-ii` (reserved, the same as `animated-i` for now).
+- `buttons`: `top` (default) or `bottom`, where the pin and check buttons sit on the box: the top right or the bottom right.
 - `maxPins` (1 to 10, default 5): pins kept per session; past it, pinning a box unpins the oldest.
 - `types.<type>.color`: border and title colour, `#RRGGBB`, or `default`.
 - `types.<type>.background`: fixed background `#RRGGBB`, `none`, or `default` (back to automatic by intensity).

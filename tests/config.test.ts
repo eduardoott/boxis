@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { DEFAULTS, PALETTE, apply, nextAnimation, nextColor, parseCommand, readConfig, style, summary, typeFromName, type Change } from '../hooks/config'
+import { DEFAULTS, PALETTE, apply, nextColor, nextSkin, parseCommand, readConfig, style, summary, typeFromName, type Change } from '../hooks/config'
 
 test('defaults: automatic dark background, about-you without background, intensity 0 removes them all', () => {
   expect(style(DEFAULTS, 'decision').color).toBe('#4A90E2')
@@ -55,7 +55,7 @@ test('legacy command words still work as aliases', () => {
   expect(cfg().types).toEqual({})
   expect(parseCommand('tela clara')).toEqual({ light: true })
   expect(parseCommand('tela escura')).toEqual({ light: false })
-  expect(parseCommand('animacao relógio')).toEqual({ animation: 'relógio' })
+  expect(parseCommand('animacao relógio')).toEqual({ skin: 'relógio' })
   expect(parseCommand('fixadas')).toBe('pins')
 })
 
@@ -77,7 +77,7 @@ test('errors: unknown type, bad colour, intensity out of range', () => {
 
 test('a malformed saved config reads as the defaults', () => {
   expect(readConfig(null)).toEqual(DEFAULTS)
-  expect(readConfig({ enabled: false, intensity: 999, types: { warning: { color: 'x' } } })).toEqual({ enabled: false, intensity: 100, light: false, check: true, animation: 'none', maxPins: 5, types: {} })
+  expect(readConfig({ enabled: false, intensity: 999, types: { warning: { color: 'x' } } })).toEqual({ enabled: false, intensity: 100, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, types: {} })
 })
 
 test('a light screen lightens the backgrounds; the pane buttons walk the palette and wrap around', () => {
@@ -92,23 +92,34 @@ test('a light screen lightens the backgrounds; the pane buttons walk the palette
   expect(parseCommand('')).toBe('panel')
 })
 
-test('animation: none by default, the command takes accents, a bad value errors, default leaves it', () => {
-  expect(readConfig(undefined).animation).toBe('none')
-  expect(readConfig({ animation: 'clock' }).animation).toBe('clock')
-  expect(readConfig({ animation: 'banana' }).animation).toBe('none')
-  const m = parseCommand('animation Clock')
-  expect(m).toEqual({ animation: 'Clock' })
+test('skin: none by default, the legacy animation values map, the command takes any case and a space, a bad value errors, default leaves it', () => {
+  expect(readConfig(undefined).skin).toBe('none')
+  expect(readConfig({ skin: 'animated-ii' }).skin).toBe('animated-ii')
+  expect(readConfig({ skin: 'banana' }).skin).toBe('none')
+  // The old key still counts when skin is absent; its values map to the new ones.
+  expect(readConfig({ animation: 'client' }).skin).toBe('animated-i')
+  expect(readConfig({ animation: 'clock' }).skin).toBe('animated-i')
+  expect(readConfig({ animation: 'banana' }).skin).toBe('none')
+  expect(readConfig({ animation: 'client', skin: 'none' }).skin).toBe('none')
+  const m = parseCommand('skin Animated II')
+  expect(m).toEqual({ skin: 'Animated II' })
   const r = apply(DEFAULTS, m as Change)
-  expect('cfg' in r && r.cfg.animation).toBe('clock')
-  const legacy = apply(DEFAULTS, { animation: 'relógio' })
-  expect('cfg' in legacy && legacy.cfg.animation).toBe('clock')
-  expect('error' in apply(DEFAULTS, { animation: 'blink' })).toBe(true)
-  const p = apply({ ...DEFAULTS, animation: 'client' }, { reset: true })
-  expect('cfg' in p && p.cfg.animation).toBe('client')
-  expect(nextAnimation('none')).toBe('clock')
-  expect(nextAnimation('client')).toBe('none')
-  expect(summary({ ...DEFAULTS, animation: 'clock' })).toContain('animation clock')
-  expect(summary(DEFAULTS)).toContain('Boxis on · background intensity 50 · dark screen · check on · animation none · max pins 5')
+  expect('cfg' in r && r.cfg.skin).toBe('animated-ii')
+  const one = apply(DEFAULTS, parseCommand('skin animated i') as Change)
+  expect('cfg' in one && one.cfg.skin).toBe('animated-i')
+  const legacy = apply(DEFAULTS, { skin: 'relógio' })
+  expect('cfg' in legacy && legacy.cfg.skin).toBe('animated-i')
+  const alias = apply(DEFAULTS, parseCommand('animation client') as Change)
+  expect('cfg' in alias && alias.cfg.skin).toBe('animated-i')
+  expect('error' in apply(DEFAULTS, { skin: 'blink' })).toBe(true)
+  expect('error' in apply(DEFAULTS, { skin: 'svg' })).toBe(true)
+  const p = apply({ ...DEFAULTS, skin: 'animated-ii' }, { reset: true })
+  expect('cfg' in p && p.cfg.skin).toBe('animated-ii')
+  expect(nextSkin('none')).toBe('animated-i')
+  expect(nextSkin('animated-i')).toBe('animated-ii')
+  expect(nextSkin('animated-ii')).toBe('none')
+  expect(summary({ ...DEFAULTS, skin: 'animated-i' })).toContain('skin animated-i')
+  expect(summary(DEFAULTS)).toContain('Boxis on · background intensity 50 · dark screen · check on · skin none · buttons top · max pins 5')
   expect(summary(DEFAULTS)).toContain('  body        border #7F77DD · background #')
   expect(summary(DEFAULTS)).toContain('  about-you   border #6B6B6B · background none')
 })
@@ -123,7 +134,7 @@ test('English type names rule, the legacy Portuguese ones stay as aliases', () =
   expect(typeFromName('wrap-up')).toBe('wrap-up')
   expect(typeFromName('fechamento')).toBe('wrap-up')
   expect(parseCommand('screen dark')).toEqual({ light: false })
-  expect(parseCommand('animation clock')).toEqual({ animation: 'clock' })
+  expect(parseCommand('skin none')).toEqual({ skin: 'none' })
   expect(parseCommand('intensity 30')).toEqual({ intensity: 30 })
   expect(parseCommand('default')).toEqual({ reset: true })
   expect(parseCommand('color warning #ff8800')).toEqual({ types: { warning: { color: '#ff8800' } } })
@@ -139,8 +150,23 @@ test('English type names rule, the legacy Portuguese ones stay as aliases', () =
   expect('error' in g && g.error).toBe('background "orange" is not a #RRGGBB color, "none" nor "default".')
   const h = apply(DEFAULTS, { types: { warning: { color: 'orange' } } })
   expect('error' in h && h.error).toBe('color "orange" is not a #RRGGBB color nor "default".')
-  const i = apply(DEFAULTS, { animation: 'blink' })
-  expect('error' in i && i.error).toBe('animation: none, clock or client.')
+  const i = apply(DEFAULTS, { skin: 'blink' })
+  expect('error' in i && i.error).toBe('skin: none, animated-i or animated-ii.')
+})
+
+test('buttons: top by default, a bad saved value reads as top, the command takes any case, a bad value errors, default leaves it', () => {
+  expect(readConfig(undefined).buttons).toBe('top')
+  expect(readConfig({ buttons: 'bottom' }).buttons).toBe('bottom')
+  expect(readConfig({ buttons: 'left' }).buttons).toBe('top')
+  expect(readConfig({ buttons: 1 }).buttons).toBe('top')
+  expect(parseCommand('buttons Bottom')).toEqual({ buttons: 'Bottom' })
+  const r = apply(DEFAULTS, parseCommand('buttons Bottom') as Change)
+  expect('cfg' in r && r.cfg.buttons).toBe('bottom')
+  const e = apply(DEFAULTS, { buttons: 'left' })
+  expect('error' in e && e.error).toBe('buttons: top or bottom.')
+  const p = apply({ ...DEFAULTS, buttons: 'bottom' }, { reset: true })
+  expect('cfg' in p && p.cfg.buttons).toBe('bottom')
+  expect(summary({ ...DEFAULTS, buttons: 'bottom' })).toContain('buttons bottom')
 })
 
 test('max pins: 5 by default, clamped to 1..10 on read and on change, set by /boxis pins max N', () => {

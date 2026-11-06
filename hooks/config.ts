@@ -22,24 +22,29 @@ const fromName = (k: string): BoxType | undefined => Object.hasOwn(NAMES, k) ? N
 export const typeFromName = (name: string): BoxType | undefined => fromName(name.trim()) ?? fromName(name.trim().toLowerCase())
 
 type TypeStyle = { color?: string; background?: string | 'none' }
-// How the boxes animate on arrival. The order is the one the panel button cycles through.
-type Animation = 'none' | 'clock' | 'client'
-const ANIMATIONS: Animation[] = ['none', 'clock', 'client']
-// Legacy animation values, accents already stripped.
-const LEGACY_ANIMATIONS: Record<string, Animation> = { nenhuma: 'none', relogio: 'clock' }
-const animationFrom = (v: unknown): Animation | undefined => {
+// The look and effects of the boxes. The order is the one the panel button cycles through.
+export type Skin = 'none' | 'animated-i' | 'animated-ii'
+export const SKINS: Skin[] = ['none', 'animated-i', 'animated-ii']
+// Legacy animation values (the old key), accents already stripped; retired 'svg' reads as none.
+const LEGACY_SKINS: Record<string, Skin> = { nenhuma: 'none', relogio: 'animated-i', clock: 'animated-i', client: 'animated-i' }
+const skinFrom = (v: unknown): Skin | undefined => {
   if (typeof v !== 'string') return undefined
-  const a = Object.hasOwn(LEGACY_ANIMATIONS, v) ? LEGACY_ANIMATIONS[v] : v
-  return ANIMATIONS.includes(a as Animation) ? a as Animation : undefined
+  const s = Object.hasOwn(LEGACY_SKINS, v) ? LEGACY_SKINS[v] : v
+  return SKINS.includes(s as Skin) ? s as Skin : undefined
 }
-export function nextAnimation(a: Animation): Animation {
-  const i = ANIMATIONS.indexOf(a)
-  return ANIMATIONS[(i + 1) % ANIMATIONS.length]
+export function nextSkin(s: Skin): Skin {
+  const i = SKINS.indexOf(s)
+  return SKINS[(i + 1) % SKINS.length]
 }
 
-export type Config = { enabled: boolean; intensity: number; light: boolean; check: boolean; animation: Animation; maxPins: number; types: Partial<Record<BoxType, TypeStyle>> }
+// Where the pin and check buttons sit on the box.
+export type Buttons = 'top' | 'bottom'
+const BUTTONS: Buttons[] = ['top', 'bottom']
+const buttonsFrom = (v: unknown): Buttons | undefined => BUTTONS.includes(v as Buttons) ? v as Buttons : undefined
 
-export const DEFAULTS: Config = { enabled: true, intensity: 50, light: false, check: true, animation: 'none', maxPins: 5, types: {} }
+export type Config = { enabled: boolean; intensity: number; light: boolean; check: boolean; skin: Skin; buttons: Buttons; maxPins: number; types: Partial<Record<BoxType, TypeStyle>> }
+
+export const DEFAULTS: Config = { enabled: true, intensity: 50, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, types: {} }
 
 // Pins per session: a short list stays a list of what matters now, not a second transcript.
 export const MIN_PINS = 1
@@ -124,15 +129,17 @@ export function readConfig(v: unknown): Config {
   }
   const raw = pick(o, 'intensity', 'intensidade')
   const i = typeof raw === 'number' ? Math.round(raw) : DEFAULTS.intensity
-  // A config without the field, a bad value or the retired 'svg': no animation.
-  const animation = animationFrom(pick(o, 'animation', 'animacao')) ?? DEFAULTS.animation
+  // Without skin, the legacy animation keys still count; a bad value or the retired 'svg' reads as none.
+  const skin = skinFrom(Object.hasOwn(o, 'skin') ? o.skin : pick(o, 'animation', 'animacao')) ?? DEFAULTS.skin
+  const buttons = buttonsFrom(o.buttons) ?? DEFAULTS.buttons
   const maxPins = typeof o.maxPins === 'number' && isFinite(o.maxPins) ? clampPins(o.maxPins) : DEFAULTS.maxPins
   return {
     enabled: pick(o, 'enabled', 'ligado') !== false,
     intensity: Math.max(0, Math.min(100, i)),
     light: pick(o, 'light', 'claro') === true,
     check: o.check !== false,
-    animation,
+    skin,
+    buttons,
     maxPins,
     types,
   }
@@ -143,7 +150,8 @@ export type Change = {
   enabled?: boolean
   light?: boolean
   check?: boolean
-  animation?: string
+  skin?: string
+  buttons?: string
   intensity?: number
   maxPins?: number
   types?: Record<string, { color?: string; background?: string }>
@@ -156,17 +164,22 @@ const NO_BACKGROUND = ['none', 'nenhum']
 
 export function apply(cfg: Config, m: Change): { cfg: Config } | { error: string } {
   const next: Config = m.reset
-    ? { ...DEFAULTS, types: {}, enabled: cfg.enabled, light: cfg.light, check: cfg.check, animation: cfg.animation, maxPins: cfg.maxPins }
+    ? { ...DEFAULTS, types: {}, enabled: cfg.enabled, light: cfg.light, check: cfg.check, skin: cfg.skin, buttons: cfg.buttons, maxPins: cfg.maxPins }
     : { ...cfg, types: { ...cfg.types } }
   if (m.enabled !== undefined) next.enabled = !!m.enabled
   if (m.light !== undefined) next.light = !!m.light
   if (m.check !== undefined) next.check = !!m.check
-  if (m.animation !== undefined) {
-    // Any case, with or without accents.
-    const typed = String(m.animation).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    const a = animationFrom(typed)
-    if (!a) return { error: 'animation: none, clock or client.' }
-    next.animation = a
+  if (m.skin !== undefined) {
+    // Any case, with or without accents; "animated i" and "Animated II" count too.
+    const typed = String(m.skin).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '-')
+    const s = skinFrom(typed)
+    if (!s) return { error: 'skin: none, animated-i or animated-ii.' }
+    next.skin = s
+  }
+  if (m.buttons !== undefined) {
+    const b = buttonsFrom(String(m.buttons).trim().toLowerCase())
+    if (!b) return { error: 'buttons: top or bottom.' }
+    next.buttons = b
   }
   if (m.intensity !== undefined) {
     if (typeof m.intensity !== 'number' || !isFinite(m.intensity) || m.intensity < 0 || m.intensity > 100) {
@@ -198,7 +211,7 @@ export function apply(cfg: Config, m: Change): { cfg: Config } | { error: string
 
 export function summary(cfg: Config): string {
   const lines = [
-    `Boxis ${cfg.enabled ? 'on' : 'off'} · background intensity ${cfg.intensity} · ${cfg.light ? 'light' : 'dark'} screen · check ${cfg.check ? 'on' : 'off'} · animation ${cfg.animation} · max pins ${cfg.maxPins}`,
+    `Boxis ${cfg.enabled ? 'on' : 'off'} · background intensity ${cfg.intensity} · ${cfg.light ? 'light' : 'dark'} screen · check ${cfg.check ? 'on' : 'off'} · skin ${cfg.skin} · buttons ${cfg.buttons} · max pins ${cfg.maxPins}`,
     ...TYPES.map(t => {
       const v = style(cfg, t)
       const changed = cfg.types[t] ? ' (adjusted)' : ''
@@ -216,7 +229,8 @@ export const HELP = [
   '/boxis on | off                       turns the boxes on or off',
   '/boxis screen light | dark            backgrounds for a light or a dark screen',
   '/boxis check on | off                 ✓ button to mark a box as understood',
-  '/boxis animation <value>              animation on arrival: none, clock, client',
+  '/boxis skin none|animated-i|animated-ii   look and effects of the boxes',
+  '/boxis buttons top|bottom             the pin and check buttons at the top right or the bottom right of the box',
   '/boxis intensity 0-100                how much colour goes into the background (0 = no background)',
   '/boxis color <type> #RRGGBB           border and title colour (default restores the original)',
   '/boxis background <type> #RRGGBB      fixed background (none removes it, default restores the automatic one)',
@@ -225,7 +239,7 @@ export const HELP = [
 ].join('\n')
 
 // What the person types after /boxis becomes a change. The English word rules; the legacy
-// Portuguese words (tela, animacao, intensidade, cor, fundo, padrao, ...) stay as aliases.
+// Portuguese words (tela, animacao, intensidade, cor, fundo, padrao, ...) and the old animation command stay as aliases.
 export function parseCommand(args: string): Change | 'status' | 'panel' | 'pins' | { error: string } {
   const p = args.trim().split(/\s+/).filter(Boolean)
   const [c, a, b] = [p[0]?.toLowerCase(), p[1], p[2]]
@@ -242,7 +256,11 @@ export function parseCommand(args: string): Change | 'status' | 'panel' | 'pins'
   if (c === 'on' || c === 'ligar' || c === 'liga') return { enabled: true }
   if (c === 'off' || c === 'desligar' || c === 'desliga') return { enabled: false }
   if (c === 'default' || c === 'reset' || c === 'padrao' || c === 'padrão') return { reset: true }
-  if ((c === 'animation' || c === 'animacao' || c === 'animação') && a) return { animation: a }
+  // "skin animated ii": the words after the command join back into one value.
+  if (c === 'skin' && a) return { skin: p.slice(1).join(' ') }
+  // The old command stays as an alias: its values map by the same legacy table.
+  if ((c === 'animation' || c === 'animacao' || c === 'animação') && a) return { skin: a }
+  if ((c === 'buttons' || c === 'button') && a) return { buttons: a }
   if (c === 'intensity' || c === 'intensidade') return { intensity: Number(a) }
   if ((c === 'color' || c === 'cor' || c === 'background' || c === 'fundo') && a && b) {
     const field = c === 'color' || c === 'cor' ? 'color' : 'background'
