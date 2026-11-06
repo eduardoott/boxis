@@ -57,8 +57,8 @@ Claude can make the same changes through the `design` tool, for example "make th
 ### Boxis skins
 
 - **None**: plain boxes, no effects.
-- **Animated I**: the title line is animated. A dot pulses on arrival, a glow runs along the border, the ✓ fills up on click and the box blinks while closing.
-- **Animated II**: reserved; the same as Animated I for now.
+- **Animated I**: the title line is animated. A dot pulses on arrival and a glow runs along the border of a warning or a decision. Under the pointer the box thickens and brightens and its buttons light up in the box colour. The pin spins before landing on 📌 (and spins back on unpin), the ✓ fills up on click while the title is wiped out from the left, and the box blinks while closing.
+- **Animated II (Neon)**: everything in Animated I, with bold borders (double on a decision) and brighter titles. A new warning or decision is drawn in: the border starts dim and the glow paints it in as it runs, with a spark at each corner. The pointer on a title row shimmers the top border; closing ramps the background to green and runs the glow twice round; pinning plays a spark burst and a lap of light along the top border.
 
 `/boxis skin animated i` and `/boxis skin Animated II` work too. The old `/boxis animation` command still works as an alias: `client` and `clock` set Animated I, `none` sets None. A config saved by an older version maps the same way.
 

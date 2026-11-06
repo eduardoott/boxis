@@ -1,9 +1,10 @@
 import type { EngineInterface, Register, RenderSurface, UiScrollArgs } from 'claude-code'
 import { split, type BoxType } from './split'
-import { BASE, GREEN, HELP, MAX_PINS, MIN_PINS, SCREEN, TYPES, apply, mix, nextColor, nextSkin, parseCommand, readConfig, style, summary, typeFromName, type Change, type Config } from './config'
+import { BASE, GREEN, HELP, MAX_PINS, MIN_PINS, SCREEN, TYPES, WHITE, apply, mix, nextColor, nextSkin, parseCommand, readConfig, style, summary, thicker, typeFromName, type Change, type Config } from './config'
 import { columnWeights, hasTable, splitTables } from './table'
-import type { GlowProps } from './glow'
-import { PIN, type TitleProps } from './title'
+import type { GlowLap, GlowProps } from './glow'
+import { BLINKS, BLINK_MS, CLOSE_MS, PIN, type TitleProps } from './title'
+export { BLINKS, BLINK_MS, CLOSE_MS }
 import { closesFence, fenceOpenAtEnd, hasFence, openFence, type Fence } from './fence'
 
 // Spacing inside the boxes, in cells.
@@ -15,7 +16,6 @@ const MAX_SPLIT = 9000
 
 // The types whose title carries the dot that pulses when the answer arrives.
 const PULSING_TYPES: BoxType[] = ['warning', 'decision']
-const WHITE = '#FFFFFF'
 // A pulse chain past its window: frame 0 is the only one that starts the title's pulse.
 const FINISHED = -1
 // Only the latest answers that pulsed stay in the map, so it does not grow forever.
@@ -25,16 +25,25 @@ const WINDOW_MS = 1000
 // Animated skins: until here the title may still start its pulse. Longer than the dot animation
 // and than WINDOW_MS; after it, a redraw or a remount never repeats the pulse.
 const PULSE_WINDOW_MS = 3000
-// Closing a box: its own border blinks and the background pulses with it, redrawn by the hook. The
-// only line that lands on the app's thin border; the pace is what a redraw keeps up with.
-export const BLINKS = 6
-export const BLINK_MS = 150
-export const CLOSE_MS = 2 * BLINKS * BLINK_MS
+// Closing a box: its own border blinks (Animated I) or ramps to green (Neon) and the background
+// follows, redrawn by the hook every BLINK_MS. The only line that lands on the app's thin border.
 const CLOSING_BACKGROUND = { lit: 0.22, dim: 0.1 }
 const CLOSING_BORDER = 0.35
-const ARRIVAL_GLOW_MS = 1400
+// Neon: the background and the border per closing step, capped.
+const NEON_CLOSING = { background: (step: number) => Math.min(0.4, 0.08 + step * 0.04), border: (step: number) => Math.min(0.5, step * 0.06) }
+const NEON_CLOSE_LAPS = 2
+export const ARRIVAL_GLOW_MS = 1400
+// Neon: the draw-in ends with the glow's post; this much later the hook gives up waiting for it.
+const ARRIVAL_GRACE_MS = 500
+// Neon: the shimmer cycle under the pointer and the pin lap.
+export const SHIMMER_MS = 1500
+export const PIN_GLOW_MS = 600
 // How much white each tail cell of the glow gets, from the head to the end.
 const TAIL = [0.85, 0.65, 0.45, 0.3, 0.15]
+const SHIMMER_TAIL = [0.4, 0.3, 0.2, 0.1]
+// Box and title under the pointer, and the Neon title: how much white goes in.
+const HOVER_BORDER = 0.35
+const NEON_TITLE = 0.15
 const MAX_SEEN = 200
 
 const CONFIG_KEY = 'config'
@@ -215,19 +224,20 @@ function pulseOf(text: string): Chain | undefined {
   return undefined
 }
 
-// Boxes closing, by the same id as the check mark, border lit or not: one redraw every BLINK_MS.
-const closing = new Map<string, boolean>()
+// Boxes closing, by the same id as the check mark, with the step 0..2*BLINKS-1: one redraw every
+// BLINK_MS. Animated I blinks on the even steps; Neon ramps with the step.
+const closing = new Map<string, number>()
 // Exported so a test can pass a $ whose clock fails.
 export function startClosing($: Pick<EngineInterface, 'clock' | 'ui'>, id: string) {
   if (closing.has(id)) return
-  closing.set(id, true)
+  closing.set(id, 0)
   $.ui.invalidate('ui.render')
   let tick: { cancel: () => void } | undefined
   try {
     tick = $.clock.every(BLINK_MS, () => {
       // The last tick may land together with the end: do not bring the box back.
       if (!closing.has(id)) return
-      closing.set(id, !closing.get(id))
+      closing.set(id, (closing.get(id) ?? 0) + 1)
       $.ui.invalidate('ui.render')
     })
     $.clock.after(CLOSE_MS, () => {
@@ -241,6 +251,56 @@ export function startClosing($: Pick<EngineInterface, 'clock' | 'ui'>, id: strin
     closing.delete(id)
     $.ui.invalidate('ui.render')
   }
+}
+
+// A set that keeps only the latest MAX_SEEN keys, like seenOutside.
+function keep(set: Set<string>, key: string) {
+  set.delete(key)
+  set.add(key)
+  for (const old of set) {
+    if (set.size <= MAX_SEEN) break
+    set.delete(old)
+  }
+}
+// Neon: boxes whose arrival draw-in ended (the glow posted, or the grace timer gave up), and those
+// still waiting for it. The title row under the pointer (hot) and the pins just pressed (pinning).
+const arrived = new Set<string>()
+const drawingIn = new Set<string>()
+const hot = new Set<string>()
+const pinning = new Set<string>()
+function arrive($: Pick<EngineInterface, 'ui'>, id: string) {
+  drawingIn.delete(id)
+  keep(arrived, id)
+  $.ui.invalidate('ui.render')
+}
+// Called from the drawing, once per box: the border stays dim until the post or the grace timer.
+function startDrawIn($: Pick<EngineInterface, 'clock' | 'ui'>, id: string) {
+  if (drawingIn.has(id) || arrived.has(id)) return
+  drawingIn.add(id)
+  try {
+    $.clock.after(ARRIVAL_GLOW_MS + ARRIVAL_GRACE_MS, () => { if (drawingIn.has(id)) arrive($, id) })
+  } catch {
+    drawingIn.delete(id)
+  }
+}
+function startPinning($: Pick<EngineInterface, 'clock' | 'ui'>, id: string) {
+  if (pinning.has(id)) return
+  pinning.add(id)
+  $.ui.invalidate('ui.render')
+  try {
+    $.clock.after(PIN_GLOW_MS, () => {
+      pinning.delete(id)
+      $.ui.invalidate('ui.render')
+    })
+  } catch {
+    pinning.delete(id)
+  }
+}
+function setHot($: Pick<EngineInterface, 'ui'>, id: string, on: boolean) {
+  if (hot.has(id) === on) return
+  if (on) hot.add(id)
+  else hot.delete(id)
+  $.ui.invalidate('ui.render')
 }
 
 // Pins: boxes the person pinned to come back to, per session. Stored as { [session]: Pin[] }.
@@ -535,7 +595,7 @@ export const register: Register = on => {
         properties: {
           enabled: { type: 'boolean', description: 'Boxes on (true) or off (false).' },
           check: { type: 'boolean', description: 'Shows the ✓ button that marks a box as understood.' },
-          skin: { type: 'string', enum: ['none', 'animated-i', 'animated-ii'], description: 'Look and effects of the boxes: none is plain, animated-i and animated-ii animate the title line on arrival and on check.' },
+          skin: { type: 'string', enum: ['none', 'animated-i', 'animated-ii'], description: 'Look and effects of the boxes: none is plain; animated-i animates the title line (pulse on arrival, hover, pin spin, check fill and wipe); animated-ii (Neon) adds bold borders, a draw-in on arrival, a shimmer under the pointer, a closing ramp and a pin spark.' },
           buttons: { type: 'string', enum: ['top', 'bottom'], description: 'The pin and check buttons at the top right or the bottom right of the box.' },
           intensity: { type: 'number', minimum: 0, maximum: 100, description: 'Background intensity, 0 (no background) to 100 (strong background).' },
           types: {
@@ -617,14 +677,19 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The title's check (animated skins) posts "closing" on the click and "checked" after the frames.
+  // The title's check (animated skins) posts "closing" on the click and "checked" after the frames;
+  // the pin posts "pinning" (Neon) on the click and "pin" after its frames; the title row posts "hot"
+  // under the pointer (Neon); the rim glow posts "arrived" at the end of the draw-in.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { checked?: unknown; closing?: unknown; all?: unknown; pin?: unknown; on?: unknown } | null
-    if (!e.element.startsWith('title-') || !data || typeof data !== 'object') return next(e)
+    const data = e.data as { checked?: unknown; closing?: unknown; all?: unknown; pin?: unknown; on?: unknown; pinning?: unknown; hot?: unknown; arrived?: unknown } | null
+    if (!(e.element.startsWith('title-') || e.element.startsWith('glow-')) || !data || typeof data !== 'object') return next(e)
     if (data.all === true) { await checkAll($); return {} }
     if (typeof data.closing === 'string') { startClosing($, data.closing); return {} }
-    // Pin and check mark come with the requested state; without on, it is malformed and passes on.
+    if (typeof data.pinning === 'string') { startPinning($, data.pinning); return {} }
+    if (typeof data.arrived === 'string') { arrive($, data.arrived); return {} }
+    // Pin, check mark and hot come with the requested state; without on, it is malformed and passes on.
     if (typeof data.on !== 'boolean') return next(e)
+    if (typeof data.hot === 'string') { setHot($, data.hot, data.on); return {} }
     if (typeof data.pin === 'string') {
       const c = seenBoxes.get(data.pin)
       await setPin($, data.pin, data.on, c && { ...c, requestId: e.requestId })
@@ -790,72 +855,116 @@ export const register: Register = on => {
     const allOn = (i: number) => last && i === boxCount - 1
     const columns = columnsOf(e.viewport)
 
+    const animated = cfg.skin !== 'none'
+    const neon = cfg.skin === 'animated-ii'
+    const screen = cfg.light ? SCREEN.light : SCREEN.dark
     // title: the subject of a body box opened by a heading; the other types keep their own.
     const box = (type: BoxType, inside: unknown, i: number, text: string, subject?: string) => {
-      const v = { ...style(cfg, type), ...(subject ? { title: subject } : {}) }
+      const v = { ...style(cfg, type, cfg.skin), ...(subject ? { title: subject } : {}) }
       const info: BoxInfo = { type, excerpt: excerptOf(text), text, requestId: e.requestId, ...(subject ? { title: subject } : {}) }
       remember(seenBoxes, idOf(i), info)
-      const isPinned = pinned.has(idOf(i))
+      const key = idOf(i)
+      const isPinned = pinned.has(key)
+      const marked = isChecked(i)
+      const base = marked ? { ...v, color: GREEN, background: mix(screen, GREEN, 0.2) } : v
+      const onClient = cfg.check && animated && Client && !boxTitleFailed(e.requestId, i)
+      const closes = onClient && closing.has(key)
+      const step = closes ? closing.get(key) ?? 0 : 0
+      // Animated I blinks: even steps lit. Neon ramps the background and the border with the step.
+      const litBorder = closes && !neon && step % 2 === 0
+      const c = !closes ? base : neon ? {
+        ...base,
+        background: mix(base.background ?? screen, GREEN, NEON_CLOSING.background(step)),
+      } : {
+        ...base,
+        background: mix(base.background ?? screen, base.color, litBorder ? CLOSING_BACKGROUND.lit : CLOSING_BACKGROUND.dim),
+      }
+      const borderColor = closes && neon ? mix(GREEN, WHITE, NEON_CLOSING.border(step)) : litBorder ? mix(base.color, WHITE, CLOSING_BORDER) : c.color
+      // The static buttons light under the pointer, as the Client ones do, in the box colour.
+      const lit = animated ? { hover: { color: c.color, dimColor: false } } : {}
       const pin = (
-        <Button key={`pin-${i}`} label={isPinned ? PIN.pinned : PIN.unpinned} onPress={() => attempt($, setPin($, idOf(i), !isPinned, info), 'the pins')}>
+        <Button key={`pin-${i}`} label={isPinned ? PIN.pinned : PIN.unpinned} {...(isPinned ? {} : lit)} onPress={() => attempt($, setPin($, key, !isPinned, info), 'the pins')}>
           {isPinned ? <Text>{PIN.pinned}</Text> : <Text dimColor>{PIN.unpinned}</Text>}
         </Button>
       )
-      const marked = isChecked(i)
-      const base = marked ? { ...v, color: GREEN, background: mix(cfg.light ? SCREEN.light : SCREEN.dark, GREEN, 0.2) } : v
-      const onClient = cfg.check && cfg.skin !== 'none' && Client && !boxTitleFailed(e.requestId, i)
-      const closes = onClient && closing.has(idOf(i))
-      const litBorder = closes && closing.get(idOf(i)) === true
-      const c = closes ? {
-        ...base,
-        background: mix(base.background ?? (cfg.light ? SCREEN.light : SCREEN.dark), base.color, litBorder ? CLOSING_BACKGROUND.lit : CLOSING_BACKGROUND.dim),
-      } : base
-      const borderColor = litBorder ? mix(base.color, WHITE, CLOSING_BORDER) : c.color
       const startPulse = PULSING_TYPES.includes(type) && !marked && pulse?.frame === 0
-      const lap = closes ? 'close' : startPulse ? 'arrive' : null
       // In the terminal the border is made of cells and the glow runs over it. In the app the border
       // is thin, between two cells: the glow runs on the inner line, hugging the border.
       const thin = e.surface !== 'terminal'
       const outside = thin ? 0 : -1
       const faint = type === 'about-you'
       // Without a spare line, the inner glow would run over the text.
-      const glows = lap && !(thin && faint)
+      const canGlow = !!onClient && !(thin && faint)
+      const lap: GlowLap | null = !canGlow ? null : closes ? 'close' : startPulse ? 'arrive' : neon && pinning.has(key) ? 'pin' : neon && hot.has(key) ? 'shimmer' : null
+      // Neon draw-in: the border stays dim while the glow paints it, until the glow's post.
+      if (lap === 'arrive' && neon) startDrawIn($, key)
+      const drawIn = lap === 'arrive' && neon && drawingIn.has(key)
       const dimmed = marked || faint
-      const title = <Text color={c.color} bold={!dimmed} dimColor={dimmed}>{c.title ?? ''}</Text>
+      const titleColor = neon && !marked ? mix(c.color, WHITE, NEON_TITLE) : c.color
+      const title = <Text color={titleColor} bold={!dimmed} dimColor={dimmed}>{c.title ?? ''}</Text>
       const bottom = cfg.buttons === 'bottom'
       const titleProps = {
         title: c.title ?? '',
-        color: c.color,
+        color: titleColor,
         dimmed,
         checked: marked,
         checkColor: GREEN,
         // Still or reopened, the box keeps the dot's place: the title does not shift.
         dot: PULSING_TYPES.includes(type),
         pulse: startPulse,
-        boxKey: idOf(i),
+        boxKey: key,
         all: allOn(i),
         pinned: isPinned,
+        closing: !!closes,
+        skin: cfg.skin as TitleProps['skin'],
       }
-      const client = (key: string, part: TitleProps['part']) => (
-        <Client key={key} module="./title.tsx" width="100%" height={1} props={{ ...titleProps, part } satisfies TitleProps} />
+      const client = (clientKey: string, part: TitleProps['part']) => (
+        <Client key={clientKey} module="./title.tsx" width="100%" height={1} props={{ ...titleProps, part } satisfies TitleProps} />
       )
       const buttons = (
         <Box key={`buttons-${i}`} flexDirection="row" gap={1} {...(bottom ? { justifyContent: 'flex-end' } : { flexShrink: 0 })}>
           {pin}
           {allOn(i) ? (
-            <Button key={`all-${i}`} label="all" onPress={() => attempt($, checkAll($), 'the check marks')}>
+            <Button key={`all-${i}`} label="all" {...lit} onPress={() => attempt($, checkAll($), 'the check marks')}>
               <Text dimColor>all</Text>
             </Button>
           ) : null}
           {cfg.check ? (
-            <Button key={`check-${i}`} label={marked ? '✓' : '○'} onPress={() => attempt($, check($, [idOf(i)], !marked), 'the check marks')}>
+            <Button key={`check-${i}`} label={marked ? '✓' : '○'} {...(marked ? {} : lit)} onPress={() => attempt($, check($, [key], !marked), 'the check marks')}>
               <Text color={marked ? GREEN : undefined} bold={marked} dimColor={!marked}>{marked ? '✓' : '○'}</Text>
             </Button>
           ) : null}
         </Box>
       )
+      // The rim glow of one lap: the whole round trip, or the top line alone (pin and shimmer).
+      const rim = (side: GlowProps['side']) => {
+        const color = lap === 'close' ? GREEN : v.color
+        const tail = lap === 'shimmer' ? SHIMMER_TAIL : TAIL
+        const durationMs = lap === 'close' ? CLOSE_MS : lap === 'arrive' ? ARRIVAL_GLOW_MS : lap === 'pin' ? PIN_GLOW_MS : SHIMMER_MS
+        return (
+          <Box key={`rim-${side}-${i}`} position="absolute" left={outside} right={outside} height={1} {...(side === 'top' ? { top: outside } : { bottom: outside })}>
+            <Client key={`glow-${lap}-${side}-${i}`} module="./glow.tsx" width="100%" height={1} props={{
+              lap: lap as GlowLap,
+              side,
+              thin,
+              colors: tail.map(k => mix(color, WHITE, k)),
+              border: c.border,
+              durationMs,
+              boxKey: key,
+              ...(lap === 'close' && neon ? { laps: NEON_CLOSE_LAPS } : {}),
+              ...(lap === 'arrive' && neon ? { paint: true, paintColor: v.color } : {}),
+              ...(lap === 'shimmer' ? { loop: true, line: true } : {}),
+              ...(lap === 'pin' ? { line: true } : {}),
+            } satisfies GlowProps} />
+          </Box>
+        )
+      }
+      const sides: GlowProps['side'][] = lap === 'shimmer' || lap === 'pin' ? ['top'] : ['top', 'bottom']
+      // Under the pointer the box thickens and brightens; a checked box stays green and still.
+      const hover = animated && !marked ? { hover: { borderStyle: thicker(c.border), borderColor: mix(c.color, WHITE, HOVER_BORDER) } } : {}
       return (
         <Box key={`box-${i}`} flexDirection="column" borderStyle={c.border} borderColor={borderColor} backgroundColor={c.background}
+          {...(drawIn ? { borderDimColor: true } : {})} {...hover}
           paddingX={SPACE_X} paddingY={faint ? 0 : SPACE_Y}>
           {onClient ? client(`title-${i}`, bottom ? 'title' : 'both') : (
             <Box key={`top-${i}`} flexDirection="row" justifyContent="space-between">
@@ -866,17 +975,7 @@ export const register: Register = on => {
           {inside}
           {bottom ? (onClient ? client(`title-b-${i}`, 'buttons') : buttons) : null}
           {/* Last: it paints over the border and the content. */}
-          {onClient && glows ? (['top', 'bottom'] as const).map(side => (
-            <Box key={`rim-${side}-${i}`} position="absolute" left={outside} right={outside} height={1} {...(side === 'top' ? { top: outside } : { bottom: outside })}>
-              <Client key={`glow-${lap}-${side}-${i}`} module="./glow.tsx" width="100%" height={1} props={{
-                side,
-                thin,
-                colors: TAIL.map(k => mix(lap === 'close' ? GREEN : v.color, WHITE, k)),
-                border: c.border,
-                durationMs: lap === 'close' ? CLOSE_MS : ARRIVAL_GLOW_MS,
-              } satisfies GlowProps} />
-            </Box>
-          )) : null}
+          {lap ? sides.map(rim) : null}
         </Box>
       )
     }

@@ -1,7 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { MAX_TEXT, jumpTarget, excerptOf, type Pin } from '../hooks/register'
-import { PIN } from '../hooks/title'
+import { PIN, PIN_FRAMES, PIN_FRAME_MS } from '../hooks/title'
 
 const TEXT = 'Body.\n\n⚠️ Careful with **X** in `usp_x_pick`.\n\n✅ Done: x. ➡️ Next: y.'
 const FOOTER = { terminal: '↗ jumps to the box in the chat · × unpins · Esc closes', other: '× unpins · Esc closes' }
@@ -153,6 +153,9 @@ test('client: the title carries the pin, the click posts { pin } and the hook pi
   expect(buttons).toEqual([`pin-${props[1].boxKey}`, `check-${props[1].boxKey}`])
   expect(withHover(await ui.drawn({ in: 'title-1' } as never))).toEqual([])
   await ui.press({ key: `pin-${props[1].boxKey}`, in: 'title-1' })
+  // The pin spins first; the post comes at the end of the frames.
+  expect(pins()).toEqual([])
+  await ui.advance(PIN_FRAME_MS * PIN_FRAMES.length)
   expect(pins().map(p => [p.id, p.type, p.requestId])).toEqual([[props[1].boxKey, 'warning', 'msg-1']])
   expect(opened.map(a => a.id)).toEqual(['boxis-pins'])
   const after = (await ui.findAll({ type: 'Client' })).filter((c: any) => c.key.startsWith('title-')).map((c: any) => c.props.props)

@@ -1,6 +1,6 @@
 import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { DEFAULTS } from '../hooks/config'
+import { DEFAULTS, mix } from '../hooks/config'
 import { CLOSE_MS, BLINKS, BLINK_MS } from '../hooks/register'
 import { columnAt, glyph } from '../hooks/glow'
 import { DOT_BEAT_MS, DOT_PULSES, CHECK_FRAMES, DOT_FRAMES, FRAME_MS } from '../hooks/title'
@@ -246,7 +246,7 @@ const checkOf = async (ui: any, key: string) => (await ui.findAll({ type: 'Text'
 const dotOf = async (ui: any, key: string) => (await ui.find({ type: 'Text', text: /^[◦◉●] $/, in: key }))?.text
 const COLUMNS = 40
 
-// Both animated skins draw the Client title; animated-ii has no effects of its own yet.
+// Both animated skins draw the Client title; animated-ii (Neon) hands it a title colour mixed toward white.
 for (const skin of ['animated-i', 'animated-ii']) test(`${skin}: one Client per box, a dot only on warning and decision, and no Button`, async ($, on) => {
   pulseWorld(on, { skin })
   const ui = await mountClient($)
@@ -260,7 +260,8 @@ for (const skin of ['animated-i', 'animated-ii']) test(`${skin}: one Client per 
   expect(props.map((p: any) => p.dot)).toEqual([false, true, true, false])
   expect(props.map((p: any) => p.checked)).toEqual([false, false, false, false])
   expect(props.map((p: any) => p.title)).toEqual(['', 'warning', 'your call', 'wrap-up'])
-  expect(props.map((p: any) => p.color)).toEqual(NORMAL)
+  expect(props.map((p: any) => p.color)).toEqual(skin === 'animated-ii' ? NORMAL.map(c => mix(c, '#FFFFFF', 0.15)) : NORMAL)
+  expect(props.map((p: any) => p.skin)).toEqual([skin, skin, skin, skin])
   expect(new Set(props.map((p: any) => p.boxKey)).size).toBe(4)
   expect(props.every((p: any) => /:\d$/.test(p.boxKey))).toBe(true)
   await ui.unmount()

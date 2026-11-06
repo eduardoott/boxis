@@ -53,6 +53,7 @@ const clampPins = (n: number) => Math.max(MIN_PINS, Math.min(MAX_PINS, Math.roun
 
 // A box checked as understood turns green, whatever its type.
 export const GREEN = '#5CB85C'
+export const WHITE = '#FFFFFF'
 
 // Colours the panel offers, in the order its ◀ ▶ buttons step through.
 export const PALETTE = [
@@ -92,7 +93,11 @@ export function mix(a: string, b: string, k: number): string {
   return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase()
 }
 
-export function style(cfg: Config, t: BoxType): { color: string; background?: string; border: string; title?: string } {
+// One step thicker: a bold border under the pointer, double when it is bold already.
+export const thicker = (border: string) => border === 'bold' || border === 'double' ? 'double' : 'bold'
+
+// skin: the chat passes its own; the panes and the summary keep the plain look (none).
+export function style(cfg: Config, t: BoxType, skin: Skin = 'none'): { color: string; background?: string; border: string; title?: string } {
   const base = BASE[t]
   const s = cfg.types[t] ?? {}
   const color = isColor(s.color) ? s.color : base.color
@@ -100,7 +105,9 @@ export function style(cfg: Config, t: BoxType): { color: string; background?: st
   if (s.background === 'none') background = undefined
   else if (isColor(s.background)) background = s.background
   else if (!base.noBackground && cfg.intensity > 0) background = mix(cfg.light ? SCREEN.light : SCREEN.dark, color, 0.36 * cfg.intensity / 100)
-  return { color, background, border: base.border, title: base.title }
+  // Neon: every border bold, the thick one double.
+  const border = skin === 'animated-ii' ? thicker(base.border) : base.border
+  return { color, background, border, title: base.title }
 }
 
 const asObject = (v: unknown) => (v && typeof v === 'object' && !Array.isArray(v) ? v : {}) as Record<string, unknown>
