@@ -3,7 +3,7 @@
 // sides are left out. It draws only single cells: a blank cell would erase the border.
 import type { ClientModule } from 'claude-code'
 
-export type GlowLap = 'arrive' | 'close' | 'shimmer' | 'pin'
+export type GlowLap = 'arrive' | 'close' | 'pin'
 
 export type GlowProps = {
   lap: GlowLap

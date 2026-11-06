@@ -35,12 +35,12 @@ const NEON_CLOSE_LAPS = 2
 export const ARRIVAL_GLOW_MS = 1400
 // Neon: the draw-in ends with the glow's post; this much later the hook gives up waiting for it.
 const ARRIVAL_GRACE_MS = 500
-// Neon: the shimmer cycle under the pointer and the pin lap.
-export const SHIMMER_MS = 1500
+// Neon: the pin lap.
 export const PIN_GLOW_MS = 600
 // How much white each tail cell of the glow gets, from the head to the end.
 const TAIL = [0.85, 0.65, 0.45, 0.3, 0.15]
-const SHIMMER_TAIL = [0.4, 0.3, 0.2, 0.1]
+// Neon: how much white the title shimmer gets, head first, then its tail.
+const SHIMMER_TAIL = [0.85, 0.6, 0.4, 0.2]
 // Box and title under the pointer, and the Neon title: how much white goes in.
 const HOVER_BORDER = 0.35
 const NEON_TITLE = 0.15
@@ -262,11 +262,10 @@ function keep(set: Set<string>, key: string) {
     set.delete(old)
   }
 }
-// Neon: boxes whose arrival draw-in ended (the glow posted, or the grace timer gave up), and those
-// still waiting for it. The title row under the pointer (hot) and the pins just pressed (pinning).
+// Neon: boxes whose arrival draw-in ended (the glow posted, or the grace timer gave up), those
+// still waiting for it, and the pins just pressed (pinning).
 const arrived = new Set<string>()
 const drawingIn = new Set<string>()
-const hot = new Set<string>()
 const pinning = new Set<string>()
 function arrive($: Pick<EngineInterface, 'ui'>, id: string) {
   drawingIn.delete(id)
@@ -296,13 +295,6 @@ function startPinning($: Pick<EngineInterface, 'clock' | 'ui'>, id: string) {
     pinning.delete(id)
   }
 }
-function setHot($: Pick<EngineInterface, 'ui'>, id: string, on: boolean) {
-  if (hot.has(id) === on) return
-  if (on) hot.add(id)
-  else hot.delete(id)
-  $.ui.invalidate('ui.render')
-}
-
 // Pins: boxes the person pinned to come back to, per session. Stored as { [session]: Pin[] }.
 const PINS_KEY = 'pins'
 const PINS_PANE = 'boxis-pins'
@@ -595,7 +587,7 @@ export const register: Register = on => {
         properties: {
           enabled: { type: 'boolean', description: 'Boxes on (true) or off (false).' },
           check: { type: 'boolean', description: 'Shows the ✓ button that marks a box as understood.' },
-          skin: { type: 'string', enum: ['none', 'animated-i', 'animated-ii'], description: 'Look and effects of the boxes: none is plain; animated-i animates the title line (pulse on arrival, hover, pin spin, check fill and wipe); animated-ii (Neon) adds bold borders, a draw-in on arrival, a shimmer under the pointer, a closing ramp and a pin spark.' },
+          skin: { type: 'string', enum: ['none', 'animated-i', 'animated-ii'], description: 'Look and effects of the boxes: none is plain; animated-i animates the title line (pulse on arrival, hover, pin spin, check fill and wipe); animated-ii (Neon) adds bold borders, a draw-in on arrival, a shimmer across the title under the pointer, a closing ramp and a pin spark.' },
           buttons: { type: 'string', enum: ['top', 'bottom'], description: 'The pin and check buttons at the top right or the bottom right of the box.' },
           intensity: { type: 'number', minimum: 0, maximum: 100, description: 'Background intensity, 0 (no background) to 100 (strong background).' },
           types: {
@@ -678,18 +670,17 @@ export const register: Register = on => {
   })
 
   // The title's check (animated skins) posts "closing" on the click and "checked" after the frames;
-  // the pin posts "pinning" (Neon) on the click and "pin" after its frames; the title row posts "hot"
-  // under the pointer (Neon); the rim glow posts "arrived" at the end of the draw-in.
+  // the pin posts "pinning" (Neon) on the click and "pin" after its frames; the rim glow posts
+  // "arrived" at the end of the draw-in.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { checked?: unknown; closing?: unknown; all?: unknown; pin?: unknown; on?: unknown; pinning?: unknown; hot?: unknown; arrived?: unknown } | null
+    const data = e.data as { checked?: unknown; closing?: unknown; all?: unknown; pin?: unknown; on?: unknown; pinning?: unknown; arrived?: unknown } | null
     if (!(e.element.startsWith('title-') || e.element.startsWith('glow-')) || !data || typeof data !== 'object') return next(e)
     if (data.all === true) { await checkAll($); return {} }
     if (typeof data.closing === 'string') { startClosing($, data.closing); return {} }
     if (typeof data.pinning === 'string') { startPinning($, data.pinning); return {} }
     if (typeof data.arrived === 'string') { arrive($, data.arrived); return {} }
-    // Pin, check mark and hot come with the requested state; without on, it is malformed and passes on.
+    // Pin and check mark come with the requested state; without on, it is malformed and passes on.
     if (typeof data.on !== 'boolean') return next(e)
-    if (typeof data.hot === 'string') { setHot($, data.hot, data.on); return {} }
     if (typeof data.pin === 'string') {
       const c = seenBoxes.get(data.pin)
       await setPin($, data.pin, data.on, c && { ...c, requestId: e.requestId })
@@ -895,7 +886,7 @@ export const register: Register = on => {
       const faint = type === 'about-you'
       // Without a spare line, the inner glow would run over the text.
       const canGlow = !!onClient && !(thin && faint)
-      const lap: GlowLap | null = !canGlow ? null : closes ? 'close' : startPulse ? 'arrive' : neon && pinning.has(key) ? 'pin' : neon && hot.has(key) ? 'shimmer' : null
+      const lap: GlowLap | null = !canGlow ? null : closes ? 'close' : startPulse ? 'arrive' : neon && pinning.has(key) ? 'pin' : null
       // Neon draw-in: the border stays dim while the glow paints it, until the glow's post.
       if (lap === 'arrive' && neon) startDrawIn($, key)
       const drawIn = lap === 'arrive' && neon && drawingIn.has(key)
@@ -917,6 +908,7 @@ export const register: Register = on => {
         pinned: isPinned,
         closing: !!closes,
         skin: cfg.skin as TitleProps['skin'],
+        ...(neon ? { shimmerColors: SHIMMER_TAIL.map(k => mix(titleColor, WHITE, k)) } : {}),
       }
       const client = (clientKey: string, part: TitleProps['part']) => (
         <Client key={clientKey} module="./title.tsx" width="100%" height={1} props={{ ...titleProps, part } satisfies TitleProps} />
@@ -936,32 +928,31 @@ export const register: Register = on => {
           ) : null}
         </Box>
       )
-      // The rim glow of one lap: the whole round trip, or the top line alone (pin and shimmer).
+      // The rim glow of one lap: the whole round trip, or the top line alone (pin).
       const rim = (side: GlowProps['side']) => {
         const color = lap === 'close' ? GREEN : v.color
-        const tail = lap === 'shimmer' ? SHIMMER_TAIL : TAIL
-        const durationMs = lap === 'close' ? CLOSE_MS : lap === 'arrive' ? ARRIVAL_GLOW_MS : lap === 'pin' ? PIN_GLOW_MS : SHIMMER_MS
+        const durationMs = lap === 'close' ? CLOSE_MS : lap === 'arrive' ? ARRIVAL_GLOW_MS : PIN_GLOW_MS
         return (
           <Box key={`rim-${side}-${i}`} position="absolute" left={outside} right={outside} height={1} {...(side === 'top' ? { top: outside } : { bottom: outside })}>
             <Client key={`glow-${lap}-${side}-${i}`} module="./glow.tsx" width="100%" height={1} props={{
               lap: lap as GlowLap,
               side,
               thin,
-              colors: tail.map(k => mix(color, WHITE, k)),
+              colors: TAIL.map(k => mix(color, WHITE, k)),
               border: c.border,
               durationMs,
               boxKey: key,
               ...(lap === 'close' && neon ? { laps: NEON_CLOSE_LAPS } : {}),
               ...(lap === 'arrive' && neon ? { paint: true, paintColor: v.color } : {}),
-              ...(lap === 'shimmer' ? { loop: true, line: true } : {}),
               ...(lap === 'pin' ? { line: true } : {}),
             } satisfies GlowProps} />
           </Box>
         )
       }
-      const sides: GlowProps['side'][] = lap === 'shimmer' || lap === 'pin' ? ['top'] : ['top', 'bottom']
-      // Under the pointer the box thickens and brightens; a checked box stays green and still.
-      const hover = animated && !marked ? { hover: { borderStyle: thicker(c.border), borderColor: mix(c.color, WHITE, HOVER_BORDER) } } : {}
+      const sides: GlowProps['side'][] = lap === 'pin' ? ['top'] : ['top', 'bottom']
+      // Under the pointer the box thickens and brightens; a checked box stays green and still, and
+      // while closing or drawing in the hover would hide the border effect.
+      const hover = animated && !marked && !closes && !drawIn ? { hover: { borderStyle: thicker(c.border), borderColor: mix(c.color, WHITE, HOVER_BORDER) } } : {}
       return (
         <Box key={`box-${i}`} flexDirection="column" borderStyle={c.border} borderColor={borderColor} backgroundColor={c.background}
           {...(drawIn ? { borderDimColor: true } : {})} {...hover}

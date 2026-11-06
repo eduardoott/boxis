@@ -4,17 +4,23 @@ import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { GREEN, WHITE, mix } from '../hooks/config'
 import { ARRIVAL_GLOW_MS, BLINK_MS, BLINKS, CLOSE_MS, PIN_GLOW_MS, type Pin } from '../hooks/register'
-import { CHECK_FRAMES, FRAME_MS, PIN_FRAMES, PIN_FRAME_MS, PIN_SPARK_FRAMES, PIN_SPARK_MS, WIPE_STEPS } from '../hooks/title'
+import { CHECK_FRAMES, FRAME_MS, PIN_FRAMES, PIN_FRAME_MS, PIN_SPARK_FRAMES, PIN_SPARK_MS, PIN_WAIT_MS, SHIMMER_GAP_STEPS, SHIMMER_STEP_MS, WIPE_STEPS } from '../hooks/title'
 
 const PULSING = 'Body.\n\n```bash\necho hi\n```\n\n⚠️ Careful with X.\n\n❓ Do A?\n\n✅ Done: x. ➡️ Next: y.'
 const NORMAL = ['#7F77DD', '#E0B040', '#4A90E2', '#5CB85C']
 const COLUMNS = 40
 const turnEnd = (answer: string) => ({ answer, reason: 'answer' as const, durationMs: 10, isAborted: false, turnId: 't1' })
 
-function world(on: On, config: Record<string, unknown>) {
+// failPins: every write of the pins is refused, and counted in posted.
+function world(on: On, config: Record<string, unknown>, opts: { failPins?: boolean } = {}) {
   const disk: Record<string, unknown> = { config }
+  const posted: unknown[] = []
   on('store.get', (_, e) => ({ value: disk[e.key] }) as never)
-  on('store.set', (_, e) => { disk[e.key] = JSON.parse(JSON.stringify(e.value)); return { value: undefined } as never })
+  on('store.set', (_, e) => {
+    if (opts.failPins && e.key === 'pins') { posted.push(e.value); throw new Error('disk full') }
+    disk[e.key] = JSON.parse(JSON.stringify(e.value))
+    return { value: undefined } as never
+  })
   on('session.id', () => ({ value: 's1' }) as never)
   on('ui.open', (_, e) => ({ value: { isPlaced: true, requestId: (e as any).id } }) as never)
   on('ui.toast', () => ({ value: undefined }) as never)
@@ -26,7 +32,7 @@ function world(on: On, config: Record<string, unknown>) {
   on('turn.complete', ($, e) => ({ text: e.answer }))
   const clock = mock.clock(on, { now: 1_800_000_000_000 })
   const pins = () => ((disk.pins ?? {}) as Record<string, Pin[]>).s1 ?? []
-  return { disk, clock, pins }
+  return { disk, clock, pins, posted }
 }
 const mountClient = ($: any, surface = 'desktop', text = PULSING) =>
   $.ui.mount({ plugin: 'boxis', surface, component: 'AssistantMessage', requestId: 'm1', props: { text, isFirstOfReply: true } } as never)
@@ -220,30 +226,127 @@ test('animated-ii: the draw-in flashes ✦ at the corner the head crosses, for t
   await ui.unmount()
 })
 
-// (e) Neon: the pointer on the title row posts hot and the top rim shimmers; Animated I only lights the buttons.
-for (const skin of ['animated-i', 'animated-ii']) test(`${skin}: the pointer on the title lights the buttons${skin === 'animated-ii' ? ' and shimmers the top rim' : ', no shimmer'}`, async ($, on) => {
+// (e) Neon: the pointer on the title row runs a shimmer across the title, drawn by the title
+// Client itself; Animated I only lights the buttons.
+for (const skin of ['animated-i', 'animated-ii']) test(`${skin}: the pointer on the title lights the buttons${skin === 'animated-ii' ? ' and runs the shimmer across the title' : ', no shimmer'}`, async ($, on) => {
   world(on, { skin })
   const ui = await mountClient($)
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
   expect((await checkOf(ui))?.props.dimColor).toBe(true)
-  await ui.pointer({ type: 'enter', x: 1, y: 0, in: 'title-1' })
   const color = skin === 'animated-ii' ? mix('#E0B040', WHITE, 0.15) : '#E0B040'
+  const shimmer = [0.85, 0.6, 0.4, 0.2].map(k => mix(color, WHITE, k))
+  expect((await clients(ui))[1].shimmerColors).toEqual(skin === 'animated-ii' ? shimmer : undefined)
+  // The title's texts in order, without the dot: the shimmer splits the title into runs of one colour.
+  const runs = async () => (await ui.findAll({ type: 'Text', in: 'title-1' })).filter((t: any) => 'warning'.includes(t.text) && t.text !== '').map((t: any) => [t.text, t.props.color])
+  expect(await runs()).toEqual([['warning', color]])
+  await ui.pointer({ type: 'enter', x: 1, y: 0, in: 'title-1' })
   expect((await checkOf(ui))?.props.color).toBe(color)
   expect((await ui.find({ type: 'Button', key: `pin-${(await clients(ui))[1].boxKey}`, in: 'title-1' }))?.children.some((c: any) => c.props?.color === color)).toBe(true)
+  expect(await glowKeys(ui)).toEqual([])
   if (skin === 'animated-ii') {
-    expect(await glowKeys(ui)).toEqual(['glow-shimmer-top-1'])
-    expect((await glows(ui))[0].props.props).toMatchObject({ lap: 'shimmer', loop: true, line: true, durationMs: 1500 })
-    expect((await glows(ui))[0].props.props.colors).toEqual([0.4, 0.3, 0.2, 0.1].map(k => mix('#E0B040', WHITE, k)))
-    // It keeps running past its cycle while the pointer stays.
-    await ui.resize({ columns: COLUMNS, rows: 1, in: 'glow-shimmer-top-1' })
-    await ui.advance(4000)
-    expect((await ui.findAll({ type: 'Text', in: 'glow-shimmer-top-1' })).length).toBeGreaterThan(0)
+    // On enter the head sits on the first character; each step moves it one to the right.
+    expect(await runs()).toEqual([['w', shimmer[0]], ['arning', color]])
+    await ui.advance(SHIMMER_STEP_MS)
+    expect(await runs()).toEqual([['w', shimmer[1]], ['a', shimmer[0]], ['rning', color]])
+    await ui.advance(3 * SHIMMER_STEP_MS)
+    expect(await runs()).toEqual([['w', color], ['a', shimmer[3]], ['r', shimmer[2]], ['n', shimmer[1]], ['i', shimmer[0]], ['ng', color]])
+    // Past the last character plus the tail the title rests plain, then the head starts over.
+    await ui.advance(('warning'.length + 3 - 4) * SHIMMER_STEP_MS)
+    expect(await runs()).toEqual([['warning', color]])
+    await ui.advance((SHIMMER_GAP_STEPS - 1) * SHIMMER_STEP_MS)
+    expect(await runs()).toEqual([['warning', color]])
+    await ui.advance(SHIMMER_STEP_MS)
+    expect(await runs()).toEqual([['w', shimmer[0]], ['arning', color]])
+    expect((await runs()).every(([, c]) => c !== undefined)).toBe(true)
   } else {
-    expect(await glowKeys(ui)).toEqual([])
+    await ui.advance(4 * SHIMMER_STEP_MS)
+    expect(await runs()).toEqual([['warning', color]])
   }
   await ui.pointer({ type: 'leave', x: 1, y: 0, in: 'title-1' })
   expect((await checkOf(ui))?.props.dimColor).toBe(true)
-  expect(await glowKeys(ui)).toEqual([])
+  expect(await runs()).toEqual([['warning', color]])
+  await ui.advance(4 * SHIMMER_STEP_MS)
+  expect(await runs()).toEqual([['warning', color]])
+  await ui.unmount()
+})
+
+test('animated-ii: the shimmer stops when the box starts closing, and does not start on a checked box', async ($, on) => {
+  world(on, { skin: 'animated-ii' })
+  const ui = await mountClient($)
+  await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
+  const key = (await clients(ui))[1].boxKey
+  const color = mix('#E0B040', WHITE, 0.15)
+  const lit = async () => (await ui.findAll({ type: 'Text', in: 'title-1' })).some((t: any) => t.props.color === mix(color, WHITE, 0.85))
+  await ui.pointer({ type: 'enter', x: 1, y: 0, in: 'title-1' })
+  await ui.advance(SHIMMER_STEP_MS)
+  expect(await lit()).toBe(true)
+  await ui.post({ closing: key }, { in: 'title-1' })
+  expect(await lit()).toBe(false)
+  await ui.advance(4 * SHIMMER_STEP_MS)
+  expect(await lit()).toBe(false)
+  await ui.post({ checked: key, on: true }, { in: 'title-1' })
+  await ui.pointer({ type: 'leave', x: 1, y: 0, in: 'title-1' })
+  await ui.pointer({ type: 'enter', x: 1, y: 0, in: 'title-1' })
+  await ui.advance(4 * SHIMMER_STEP_MS)
+  expect(await lit()).toBe(false)
+  await ui.unmount()
+})
+
+// The hook could not save the pin: past PIN_WAIT_MS the glyph follows the prop and the button is live again.
+test('animated-ii: a pin the hook cannot save falls back to ⚲ after the wait, and a new press posts again', async ($, on) => {
+  const { pins, posted } = world(on, { skin: 'animated-ii' }, { failPins: true })
+  const ui = await mountClient($)
+  await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
+  const key = (await clients(ui))[1].boxKey
+  await ui.press({ key: `pin-${key}`, in: 'title-1' })
+  await ui.advance(PIN_SPARK_FRAMES.length * PIN_SPARK_MS)
+  expect(posted.length).toBe(1)
+  expect(pins()).toEqual([])
+  expect(await pinOf(ui, key)).toBe('📌')
+  // Pressing while the pin waits does nothing.
+  await ui.press({ key: `pin-${key}`, in: 'title-1' })
+  expect(posted.length).toBe(1)
+  await ui.advance(PIN_WAIT_MS)
+  expect(await pinOf(ui, key)).toBe('⚲')
+  await ui.press({ key: `pin-${key}`, in: 'title-1' })
+  await ui.advance(PIN_SPARK_FRAMES.length * PIN_SPARK_MS)
+  expect(posted.length).toBe(2)
+  await ui.unmount()
+})
+
+// A closing box carries no hover: the override would hide the blink or the ramp of its border.
+for (const skin of ['animated-i', 'animated-ii']) test(`${skin}: no box hover while closing, back once closed and unchecked`, async ($, on) => {
+  const { clock } = world(on, { skin })
+  const ui = await mountClient($)
+  const hover = async () => hoverOf(await ui.drawn(), 'box-1')
+  const key = (await clients(ui))[1].boxKey
+  expect(await hover()).toBeDefined()
+  await ui.post({ closing: key }, { in: 'title-1' })
+  expect(await hover()).toBeUndefined()
+  await clock.advance(CLOSE_MS / 2)
+  expect(await hover()).toBeUndefined()
+  await clock.advance(CLOSE_MS)
+  expect(await hover()).toBeDefined()
+  // Checked after closing: still none, until unchecked.
+  await ui.post({ closing: key }, { in: 'title-1' })
+  await ui.post({ checked: key, on: true }, { in: 'title-1' })
+  expect(await hover()).toBeUndefined()
+  await clock.advance(2 * CLOSE_MS)
+  expect(await hover()).toBeUndefined()
+  await ui.post({ checked: key, on: false }, { in: 'title-1' })
+  expect(await hover()).toBeDefined()
+  await ui.unmount()
+})
+
+test('animated-ii: no box hover while the border draws in', async ($, on) => {
+  const { clock } = world(on, { skin: 'animated-ii' })
+  const ui = await mountClient($, 'terminal')
+  const hover = async () => hoverOf(await ui.drawn(), 'box-1')
+  expect(await hover()).toBeDefined()
+  await $.turn.complete(turnEnd(PULSING))
+  expect(await hover()).toBeUndefined()
+  await clock.advance(ARRIVAL_GLOW_MS + 500)
+  expect(await hover()).toBeDefined()
   await ui.unmount()
 })
 

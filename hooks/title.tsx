@@ -1,6 +1,7 @@
 // Animated skins: the title line as a surface module, which the app animates without
 // redrawing the rest of the screen. A dot that pulses on arrival, a check that turns into ✓, a pin
-// that spins (or sparks, in Neon), buttons lit under the pointer and a title wiped on check.
+// that spins (or sparks, in Neon), buttons lit under the pointer, a title wiped on check and, in
+// Neon, a shimmer across the title under the pointer.
 import type { ClientModule } from 'claude-code'
 
 export type TitleSkin = 'animated-i' | 'animated-ii'
@@ -22,6 +23,8 @@ export type TitleProps = {
   // The hook is closing the box (the border blinks): the title wipes out while the ✓ fills.
   closing?: boolean
   skin?: TitleSkin
+  // Neon: the pointer on the row runs a shimmer across the title, head colour first, then the tail.
+  shimmerColors?: string[]
   // With the buttons at the bottom of the box, one instance draws the title and another the buttons.
   part: 'both' | 'title' | 'buttons'
 }
@@ -42,6 +45,12 @@ export const PIN_FRAME_MS = 70
 // Neon: a spark burst instead of the spin, pinning and unpinning alike.
 export const PIN_SPARK_FRAMES = ['✧', '✦', '✧', '✦']
 export const PIN_SPARK_MS = 80
+// After the pin posts, the pinned prop confirms it; past this the button falls back to the prop.
+export const PIN_WAIT_MS = 1500
+// The shimmer head moves one character per step; past the end it rests this many steps.
+export const SHIMMER_STEP_MS = 60
+export const SHIMMER_GAP_STEPS = 8
+const SHIMMER_TAIL = 3
 // Closing a box: the hook blinks (or ramps) the border this many beats; the title wipes over the
 // same window. Shared with the hook, which re-exports them.
 export const BLINKS = 6
@@ -56,33 +65,48 @@ type Local = {
   pinFrame: number
   wipe: number
   hot: boolean
+  // The column of the shimmer head; past the title and its tail, the rest of the gap.
+  shimmer: number
   // What does not redraw: the timers, and the flags that stop a pulse restarting or a click repeating.
   ref: {
     pulse?: () => void; pulsed?: boolean
     check?: () => void; waiting?: boolean
-    pin?: () => void; pinFrames?: string[]; pinWaiting?: boolean; pinShown?: boolean
+    pin?: () => void; pinFrames?: string[]; pinWaiting?: boolean; pinShown?: boolean; pinWait?: () => void
     wipe?: () => void
+    shimmer?: () => void
     props: TitleProps
   }
 }
+
+// The shimmer runs on the title instance only, under the pointer, never over a closing or checked box.
+const canShimmer = (p: TitleProps) => !!p.shimmerColors && p.part !== 'buttons' && !p.closing && !p.checked
 
 const Title: ClientModule<TitleProps, Local> = (props, surface) => {
   const { Box, Text, Button } = surface.elements
   let state = surface.state
   if (state === undefined) {
-    state = { step: 0, frame: 0, pinFrame: 0, wipe: 0, hot: false, ref: { props } }
+    state = { step: 0, frame: 0, pinFrame: 0, wipe: 0, hot: false, shimmer: 0, ref: { props } }
     surface.setState(state)
     const initial = state
     const latest = () => surface.state ?? initial
-    // Lit buttons while the pointer is on the line; in Neon the hook also shimmers the rim.
+    const r = state.ref
+    // Lit buttons while the pointer is on the line; in Neon the title instance also runs the shimmer.
     surface.onPointer(e => {
       if (e.type !== 'enter' && e.type !== 'leave') return
       const cur = latest()
       const hot = e.type === 'enter'
       if (cur.hot === hot) return
-      surface.setState({ ...cur, hot })
-      const p = cur.ref.props
-      if (p.part !== 'buttons' && p.skin === 'animated-ii') surface.post({ hot: p.boxKey, on: hot })
+      if (hot && canShimmer(r.props) && !r.shimmer) {
+        r.shimmer = surface.every(SHIMMER_STEP_MS, () => {
+          const c = latest()
+          const end = c.ref.props.title.length + SHIMMER_TAIL
+          surface.setState({ ...c, shimmer: c.shimmer + 1 >= end + SHIMMER_GAP_STEPS ? 0 : c.shimmer + 1 })
+        })
+      } else if (!hot) {
+        r.shimmer?.()
+        r.shimmer = undefined
+      }
+      surface.setState({ ...cur, hot, shimmer: hot ? cur.shimmer : 0 })
     })
   }
   const initial = state
@@ -91,7 +115,18 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
   ref.props = props
   // The mark has arrived: from here the prop rules, and unchecking from outside goes back to ○.
   if (props.checked) ref.waiting = false
-  if (ref.pinWaiting && !!props.pinned === ref.pinShown) ref.pinWaiting = false
+  if (ref.pinWaiting && !!props.pinned === ref.pinShown) {
+    ref.pinWaiting = false
+    ref.pinWait?.()
+    ref.pinWait = undefined
+  }
+  // Closing or checked mid-shimmer: the wipe wins, the title draws plain.
+  if (ref.shimmer && !canShimmer(props)) {
+    ref.shimmer()
+    ref.shimmer = undefined
+    state = { ...state, shimmer: 0 }
+    surface.setState(state)
+  }
 
   // The Client mounts while the answer is still arriving: pulse can turn true after mounting.
   // The pulse belongs to the instance that draws the title; a buttons-only one never starts it.
@@ -167,6 +202,15 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
         ref.pin = undefined
         ref.pinWaiting = true
         ref.pinShown = on
+        // The hook may fail to save the pin: past the wait the glyph follows the prop again.
+        ref.pinWait = surface.every(PIN_WAIT_MS, () => {
+          ref.pinWait?.()
+          ref.pinWait = undefined
+          if (!ref.pinWaiting) return
+          ref.pinWaiting = false
+          ref.pinShown = undefined
+          surface.setState({ ...current() })
+        })
         surface.post({ pin: ref.props.boxKey, on })
       }
       surface.setState({ ...cur, pinFrame })
@@ -181,12 +225,23 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
   const pinGlyph = ref.pin ? ref.pinFrames?.[Math.min(state.pinFrame, (ref.pinFrames?.length ?? 1) - 1)] ?? PIN.unpinned : pinOn ? PIN.pinned : PIN.unpinned
   // Step k of the wipe strikes the first ceil(len * k / steps) characters.
   const struck = wiping ? Math.ceil(props.title.length * Math.min(state.wipe, WIPE_STEPS) / WIPE_STEPS) : 0
+  // The shimmer head and its tail, over the un-struck part, as runs of one colour each.
+  const head = ref.shimmer && state.shimmer < props.title.length + SHIMMER_TAIL ? state.shimmer : -1
+  const shimmerAt = (j: number) => head - j >= 0 && head - j < (props.shimmerColors?.length ?? 0) ? props.shimmerColors?.[head - j] : undefined
+  const rest = []
+  for (let from = struck; from < props.title.length;) {
+    const color = shimmerAt(from)
+    let to = from + 1
+    while (to < props.title.length && shimmerAt(to) === color) to++
+    rest.push(<Text key={`t-${from}`} color={color ?? props.color} bold={!props.dimmed} dimColor={props.dimmed}>{props.title.slice(from, to)}</Text>)
+    from = to
+  }
   const title = (
     <Box flexShrink={1} overflow="hidden" {...(props.part === 'title' ? { width: '100%' } : {})}>
       <Text>
         {props.dot ? <Text color={props.color}>{`${dot} `}</Text> : null}
         {struck > 0 ? <Text color={props.color} dimColor strikethrough>{props.title.slice(0, struck)}</Text> : null}
-        {struck < props.title.length ? <Text color={props.color} bold={!props.dimmed} dimColor={props.dimmed}>{props.title.slice(struck)}</Text> : null}
+        {rest}
       </Text>
     </Box>
   )
