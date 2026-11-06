@@ -139,6 +139,8 @@ async function check($: EngineInterface, ids: string[], on: boolean) {
     fromLegacy = false
   }
   checked = next
+  // A box marked as understood no longer needs keeping at hand; unchecking never pins it back.
+  if (on && (await readPins($)).some(p => these.has(p.id))) await savePins($, list => list.filter(p => !these.has(p.id)))
   $.ui.invalidate('ui.render')
   if (on && ids.some(id => !before.includes(id))) celebrate($)
 }
@@ -760,7 +762,16 @@ export const register: Register = on => {
         <Text dimColor>×</Text>
       </Button>
     )
-    // A pin from before text was kept: the title and excerpt row, with the same pair of buttons.
+    const tick = (p: Pin) => {
+      if (!cfg.check) return null
+      const marked = marks.includes(p.id)
+      return (
+        <Button key={`check-${p.id}`} label={marked ? '✓' : '○'} onPress={() => attempt($, check($, [p.id], !marked), 'the check marks')}>
+          <Text color={marked ? GREEN : undefined} bold={marked} dimColor={!marked}>{marked ? '✓' : '○'}</Text>
+        </Button>
+      )
+    }
+    // A pin from before text was kept: the title and excerpt row, with the same buttons.
     const row = (p: Pin) => (
       <Box key={`pin-${p.id}`} flexDirection="row" gap={1}>
         <Box flexGrow={1} flexShrink={1}>
@@ -770,6 +781,7 @@ export const register: Register = on => {
           </Text>
         </Box>
         {jump(p)}
+        {tick(p)}
         {unpin(p)}
       </Box>
     )
@@ -790,6 +802,7 @@ export const register: Register = on => {
             <Text color={c.color} bold={!dimmed} dimColor={dimmed}>{c.title ?? ''}</Text>
             <Box flexDirection="row" gap={1} flexShrink={0}>
               {jump(p)}
+              {tick(p)}
               {unpin(p)}
             </Box>
           </Box>
@@ -811,7 +824,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column" rowGap={e.surface === 'terminal' ? 0 : 1}>
         {list.length === 0 ? <Text dimColor>{`No pins yet. Use ${PIN.unpinned} on a box to pin it.`}</Text> : drawings}
-        <Text dimColor>{canJump ? '↗ jumps to the box in the chat · × unpins · Esc closes' : '× unpins · Esc closes'}</Text>
+        <Text dimColor>{`${canJump ? '↗ jumps to the box in the chat · ' : ''}${cfg.check ? '○ checks and unpins · ' : ''}× unpins · Esc closes`}</Text>
       </Box>
     )
   })

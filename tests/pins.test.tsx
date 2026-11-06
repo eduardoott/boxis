@@ -4,7 +4,7 @@ import { MAX_TEXT, jumpTarget, excerptOf, type Pin } from '../hooks/register'
 import { PIN, PIN_FRAMES, PIN_FRAME_MS } from '../hooks/title'
 
 const TEXT = 'Body.\n\n⚠️ Careful with **X** in `usp_x_pick`.\n\n✅ Done: x. ➡️ Next: y.'
-const FOOTER = { terminal: '↗ jumps to the box in the chat · × unpins · Esc closes', other: '× unpins · Esc closes' }
+const FOOTER = { terminal: '↗ jumps to the box in the chat · ○ checks and unpins · × unpins · Esc closes', other: '○ checks and unpins · × unpins · Esc closes' }
 
 // An in-memory store the test reads, a switchable session, and what the mod opened and toasted.
 function world(on: On, start: Record<string, unknown> = {}) {
@@ -89,7 +89,7 @@ test('pane: empty says how to pin; with pins, title in the type colour, content 
   await msg.press({ key: 'pin-2' })
   const pane = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
   const rows = (await pane.findAll({ type: 'Button' })).map((b: any) => b.key)
-  expect(rows).toEqual(pins().flatMap(p => [`jump-${p.id}`, `unpin-${p.id}`]))
+  expect(rows).toEqual(pins().flatMap(p => [`jump-${p.id}`, `check-${p.id}`, `unpin-${p.id}`]))
   expect((await pane.find({ type: 'Text', text: /^warning$/ }))?.props.color).toBe('#E0B040')
   expect((await pane.find({ type: 'Text', text: /^wrap-up$/ }))?.props.color).toBe('#5CB85C')
   expect(await pane.find({ type: 'Markdown', text: /Careful with \*\*X\*\* in `usp_x_pick`\./ })).toBeDefined()
@@ -113,13 +113,13 @@ test('↗ is terminal only: desktop, vscode and mobile show the boxes with × al
   const id = pins()[0]!.id
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const pane = await $.ui.mount({ ...PANE, surface } as never)
-    expect((await pane.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual([`unpin-${id}`])
+    expect((await pane.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual([`check-${id}`, `unpin-${id}`])
     expect(await pane.find({ type: 'Text', text: FOOTER.other })).toBeDefined()
     expect(await pane.find({ type: 'Text', text: /jumps/ })).toBeUndefined()
     await pane.unmount()
   }
   const terminal = await $.ui.mount({ ...PANE, surface: 'terminal' } as never)
-  expect((await terminal.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual([`jump-${id}`, `unpin-${id}`])
+  expect((await terminal.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual([`jump-${id}`, `check-${id}`, `unpin-${id}`])
   await terminal.unmount()
   await msg.unmount()
 })
@@ -201,7 +201,7 @@ test('the pane draws the pin as the box: border and type colour, title, content,
     expect(await pane.find({ type: 'Markdown', text: /Careful with \*\*X\*\*/ })).toBeDefined()
     const id = pins()[0]!.id
     expect((await pane.findAll({ type: 'Button' })).map((b: any) => [b.key, b.text]))
-      .toEqual(surface === 'terminal' ? [[`jump-${id}`, '↗'], [`unpin-${id}`, '×']] : [[`unpin-${id}`, '×']])
+      .toEqual(surface === 'terminal' ? [[`jump-${id}`, '↗'], [`check-${id}`, '○'], [`unpin-${id}`, '×']] : [[`check-${id}`, '○'], [`unpin-${id}`, '×']])
     await pane.unmount()
   }
   await msg.unmount()
@@ -229,7 +229,7 @@ test('an old pin without text still comes out as a title and excerpt row', async
   expect((await pane.findAll({ type: 'Box' })).filter((b: any) => b.props.borderColor)).toEqual([])
   expect((await pane.find({ type: 'Text', text: /^warning$/ }))?.props.color).toBe('#E0B040')
   expect(await pane.find({ type: 'Text', text: / old excerpt/ })).toBeDefined()
-  expect((await pane.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['jump-old:0', 'unpin-old:0'])
+  expect((await pane.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['jump-old:0', 'check-old:0', 'unpin-old:0'])
   await pane.unmount()
 })
 
@@ -286,7 +286,7 @@ test('pin limit: a session already over the limit keeps its pins until a new pin
   const old = Array.from({ length: 8 }, (_, i) => ({ id: `h${i}:0`, type: 'body', title: 'answer', excerpt: `h${i}`, created: 1_799_999_999_000 + i }))
   const { pins, toasts } = world(on, { pins: { s1: old } })
   const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
-  expect((await pane.findAll({ type: 'Button' })).length).toBe(8)
+  expect((await pane.findAll({ type: 'Button' })).length).toBe(16)
   await pane.press({ key: 'unpin-h7:0' })
   expect(pins().length).toBe(7)
   await pane.unmount()
@@ -295,4 +295,81 @@ test('pin limit: a session already over the limit keeps its pins until a new pin
   expect(pins().map(p => p.excerpt)).toEqual(['h3', 'h4', 'h5', 'h6', 'Careful with X in usp_x_pick.'])
   expect(toasts).toEqual(['Boxis: pin limit (5) reached, unpinned the oldest: answer "h0"; answer "h1"; answer "h2"'])
   await ui.unmount()
+})
+
+test('checking a pinned box from the chat ✓ unpins it; unchecking does not pin it back', async ($, on) => {
+  const { pins } = world(on)
+  const ui = await mount($, 'desktop')
+  await ui.press({ key: 'pin-1' })
+  await ui.press({ key: 'pin-2' })
+  expect(pins().map(p => p.type)).toEqual(['warning', 'wrap-up'])
+  await ui.press({ key: 'check-1' })
+  expect(pins().map(p => p.type)).toEqual(['wrap-up'])
+  expect((await ui.find({ type: 'Button', key: 'pin-1' }))?.text).toBe(PIN.unpinned)
+  expect((await ui.find({ type: 'Button', key: 'check-1' }))?.text).toBe('✓')
+  await ui.press({ key: 'check-1' })
+  expect((await ui.find({ type: 'Button', key: 'check-1' }))?.text).toBe('○')
+  expect(pins().map(p => p.type)).toEqual(['wrap-up'])
+  await ui.unmount()
+})
+
+test('the Client title posted "checked" unpins the box too', async ($, on) => {
+  const { pins, stored } = world(on, { config: { animation: 'client' } })
+  const ui = await mount($, 'desktop')
+  const keys = (await ui.findAll({ type: 'Client' })).filter((c: any) => c.key.startsWith('title-')).map((c: any) => c.props.props.boxKey)
+  await ui.post({ pin: keys[1], on: true }, { in: 'title-1' })
+  expect(pins().map(p => p.id)).toEqual([keys[1]])
+  await ui.post({ checked: keys[1], on: true }, { in: 'title-1' })
+  expect(stored.checked).toEqual([keys[1]])
+  expect(pins()).toEqual([])
+  await ui.post({ checked: keys[1], on: false }, { in: 'title-1' })
+  expect(pins()).toEqual([])
+  await ui.unmount()
+})
+
+test('pane: ○ checks the box and unpins it, and the chat box comes out checked', async ($, on) => {
+  const { pins, stored } = world(on)
+  const msg = await mount($, 'desktop')
+  await msg.press({ key: 'pin-1' })
+  const id = pins()[0]!.id
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  const tick = await pane.find({ type: 'Button', key: `check-${id}` })
+  expect(tick?.text).toBe('○')
+  await pane.press({ key: `check-${id}` })
+  expect(stored.checked).toEqual([id])
+  expect(pins()).toEqual([])
+  expect(await pane.find({ type: 'Text', text: `No pins yet. Use ${PIN.unpinned} on a box to pin it.` })).toBeDefined()
+  expect((await msg.find({ type: 'Button', key: 'check-1' }))?.text).toBe('✓')
+  await pane.unmount()
+  await msg.unmount()
+})
+
+test('pane: a pin of a box already checked shows ✓, and unchecking it keeps the pin', async ($, on) => {
+  const { pins, stored } = world(on)
+  const msg = await mount($, 'desktop')
+  await msg.press({ key: 'check-1' })
+  await msg.press({ key: 'pin-1' })
+  const id = pins()[0]!.id
+  const pane = await $.ui.mount({ ...PANE, surface: 'desktop' } as never)
+  expect((await pane.find({ type: 'Button', key: `check-${id}` }))?.text).toBe('✓')
+  await pane.press({ key: `check-${id}` })
+  expect(stored.checked).toEqual([])
+  expect(pins().map(p => p.id)).toEqual([id])
+  await pane.unmount()
+  await msg.unmount()
+})
+
+test('check off: the pane has no check button and its footer leaves ○ out', async ($, on) => {
+  const { pins } = world(on, { config: { check: false } })
+  const msg = await mount($, 'desktop')
+  await msg.press({ key: 'pin-1' })
+  const id = pins()[0]!.id
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const pane = await $.ui.mount({ ...PANE, surface } as never)
+    expect((await pane.findAll({ type: 'Button' })).map((b: any) => b.key))
+      .toEqual(surface === 'terminal' ? [`jump-${id}`, `unpin-${id}`] : [`unpin-${id}`])
+    expect(await pane.find({ type: 'Text', text: surface === 'terminal' ? '↗ jumps to the box in the chat · × unpins · Esc closes' : '× unpins · Esc closes' })).toBeDefined()
+    await pane.unmount()
+  }
+  await msg.unmount()
 })

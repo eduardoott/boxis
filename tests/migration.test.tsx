@@ -83,13 +83,15 @@ test('store: a legacy store draws its check marks and pins, and the next writes 
   expect((await ui.findAll({ type: 'Text', text: '✓' })).length).toBe(1)
   expect((await ui.find({ type: 'Button', key: 'pin-1' }))?.text).toBe('📌')
 
-  await ui.press({ key: 'check-1' })
-  expect(disk.checked).toEqual([`${id}:0`, `${id}:1`])
   await ui.press({ key: 'pin-0' })
   expect(disk.pins).toEqual({ s1: [
     { id: `${id}:1`, type: 'warning', title: 'warning', excerpt: 'Careful.', text: 'Careful.', requestId: 'r1', created: 0 },
     { id: `${id}:0`, type: 'body', title: 'answer', excerpt: 'Body.', text: 'Body.', requestId: 'r1', created: 5 },
   ] })
+  // Checking a pinned box unpins it.
+  await ui.press({ key: 'check-1' })
+  expect(disk.checked).toEqual([`${id}:0`, `${id}:1`])
+  expect(disk.pins).toEqual({ s1: [{ id: `${id}:0`, type: 'body', title: 'answer', excerpt: 'Body.', text: 'Body.', requestId: 'r1', created: 5 }] })
   await ui.unmount()
 
   const cfg = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'Pane', requestId: 'boxis-config', props: {} } as never)
