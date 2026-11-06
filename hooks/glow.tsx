@@ -6,7 +6,6 @@ import type { ClientModule } from 'claude-code'
 export type GlowLap = 'arrive' | 'close' | 'pin'
 
 export type GlowProps = {
-  lap: GlowLap
   side: 'top' | 'bottom'
   // The app's thin border sits between two cells, so no cell lands on it: the line runs in the
   // inner cell, its glyph hugging the border. Blinking on the border itself is done by the hook.
@@ -21,8 +20,6 @@ export type GlowProps = {
   // the end of the lap is posted as { arrived: boxKey }.
   paint?: boolean
   paintColor?: string
-  // The lap repeats every durationMs until the instance unmounts.
-  loop?: boolean
   // Laps run in durationMs (default 1).
   laps?: number
   // The lap covers this line only (left to right on top), not the round trip: for a rim that runs alone.
@@ -32,7 +29,6 @@ export type GlowProps = {
 const TICK_MS = 35
 const WHITE = '#FFFFFF'
 export const SPARK = '✦'
-// The frames a corner shows ✦ once the head crosses it.
 export const SPARK_FRAMES = 2
 
 const GLYPHS: Record<string, { corners: string; h: string }> = {
@@ -64,7 +60,7 @@ const Glow: ClientModule<GlowProps, Local> = (props, surface) => {
   const laps = Math.max(1, props.laps ?? 1)
   // Where the head is at a step on a line l wide: it keeps going until the tail has passed the end.
   const lapLen = (l: number) => props.line ? l : 2 * l
-  const headAt = (step: number, l: number) => Math.floor(((props.loop ? step % steps : step) / steps) * (laps * lapLen(l) + props.colors.length))
+  const headAt = (step: number, l: number) => Math.floor((step / steps) * (laps * lapLen(l) + props.colors.length))
   // The lap positions of this line's two corners.
   const corners = (l: number) => props.side === 'top' || props.line ? [0, l - 1] : [l, 2 * l - 1]
   const column = (p: number, l: number) => props.line ? (p >= 0 && p < l ? (props.side === 'top' ? p : l - 1 - p) : null) : columnAt(p, props.side, l)
@@ -78,7 +74,7 @@ const Glow: ClientModule<GlowProps, Local> = (props, surface) => {
     ref.stop = surface.every(TICK_MS, () => {
       const cur = surface.state ?? initial
       const step = cur.step + 1
-      if (!props.loop && step >= steps) {
+      if (step >= steps) {
         ref.stop?.()
         ref.stop = undefined
         if (props.paint && props.boxKey) surface.post({ arrived: props.boxKey })
@@ -98,7 +94,7 @@ const Glow: ClientModule<GlowProps, Local> = (props, surface) => {
   }
 
   const l = surface.columns
-  if (l < 2 || (!props.loop && state.step >= steps)) return <Box />
+  if (l < 2 || state.step >= steps) return <Box />
   const draw = (x: number) => props.thin ? (props.side === 'top' ? '▔' : '▁') : glyph(props.border, props.side, x, l)
   const head = headAt(state.step, l)
   const len = lapLen(l)

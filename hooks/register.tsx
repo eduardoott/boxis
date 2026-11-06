@@ -35,7 +35,6 @@ const NEON_CLOSE_LAPS = 2
 export const ARRIVAL_GLOW_MS = 1400
 // Neon: the draw-in ends with the glow's post; this much later the hook gives up waiting for it.
 const ARRIVAL_GRACE_MS = 500
-// Neon: the pin lap.
 export const PIN_GLOW_MS = 600
 // How much white each tail cell of the glow gets, from the head to the end.
 const TAIL = [0.85, 0.65, 0.45, 0.3, 0.15]
@@ -202,14 +201,16 @@ let inTurn = false
 let latest: { text: string; chain: Chain } | null = null
 // Blocks already drawn outside a turn (the history on opening the session): those never adopt.
 const seenOutside = new Set<string>()
-function seeOutside(key: string) {
-  seenOutside.delete(key)
-  seenOutside.add(key)
-  for (const old of seenOutside) {
-    if (seenOutside.size <= MAX_SEEN) break
-    seenOutside.delete(old)
+// A set that keeps only the latest MAX_SEEN keys.
+function keep(set: Set<string>, key: string) {
+  set.delete(key)
+  set.add(key)
+  for (const old of set) {
+    if (set.size <= MAX_SEEN) break
+    set.delete(old)
   }
 }
+const seeOutside = (key: string) => keep(seenOutside, key)
 // During the turn it only reads: the text grows with each chunk, and nothing is kept or pulses before the end.
 function pulseOf(text: string): Chain | undefined {
   const trimmed = text.trim()
@@ -253,15 +254,6 @@ export function startClosing($: Pick<EngineInterface, 'clock' | 'ui'>, id: strin
   }
 }
 
-// A set that keeps only the latest MAX_SEEN keys, like seenOutside.
-function keep(set: Set<string>, key: string) {
-  set.delete(key)
-  set.add(key)
-  for (const old of set) {
-    if (set.size <= MAX_SEEN) break
-    set.delete(old)
-  }
-}
 // Neon: boxes whose arrival draw-in ended (the glow posted, or the grace timer gave up), those
 // still waiting for it, and the pins just pressed (pinning).
 const arrived = new Set<string>()
@@ -574,6 +566,9 @@ const failureOf = (requestId: string, element: string) => `${requestId} ${elemen
 export const titleFailed = (requestId: string, element: string) => failedTitles.has(failureOf(requestId, element))
 // With the buttons at the bottom the box has two Clients: a fault on either draws the box static.
 const boxTitleFailed = (requestId: string, i: number) => titleFailed(requestId, `title-${i}`) || titleFailed(requestId, `title-b-${i}`)
+// Rim glows that failed, by answer and box (`glow-${i}`): that box draws no glow, or it would remount on every redraw.
+const failedGlows = new Map<string, true>()
+export const glowFailed = (requestId: string, i: number) => failedGlows.has(failureOf(requestId, `glow-${i}`))
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -694,6 +689,7 @@ export const register: Register = on => {
   // A Client title that failed: the engine redraws the answer by itself, and it comes out with the plain line.
   on('ui.fault', ($, e, next) => {
     if (e.element.startsWith('title-')) remember(failedTitles, failureOf(e.requestId, e.element), true as const)
+    if (e.element.startsWith('glow-')) remember(failedGlows, failureOf(e.requestId, `glow-${e.element.slice(e.element.lastIndexOf('-') + 1)}`), true as const)
     return next(e)
   })
 
@@ -885,8 +881,10 @@ export const register: Register = on => {
       const outside = thin ? 0 : -1
       const faint = type === 'about-you'
       // Without a spare line, the inner glow would run over the text.
-      const canGlow = !!onClient && !(thin && faint)
-      const lap: GlowLap | null = !canGlow ? null : closes ? 'close' : startPulse ? 'arrive' : neon && pinning.has(key) ? 'pin' : null
+      const canGlow = !!onClient && !(thin && faint) && !glowFailed(e.requestId, i)
+      // Neon: once the draw-in is over (posted or given up) the pulse window no longer holds the rim, so a pin lap can run.
+      const arriving = startPulse && !(neon && arrived.has(key))
+      const lap: GlowLap | null = !canGlow ? null : closes ? 'close' : arriving ? 'arrive' : neon && pinning.has(key) ? 'pin' : null
       // Neon draw-in: the border stays dim while the glow paints it, until the glow's post.
       if (lap === 'arrive' && neon) startDrawIn($, key)
       const drawIn = lap === 'arrive' && neon && drawingIn.has(key)
@@ -914,7 +912,7 @@ export const register: Register = on => {
         <Client key={clientKey} module="./title.tsx" width="100%" height={1} props={{ ...titleProps, part } satisfies TitleProps} />
       )
       const buttons = (
-        <Box key={`buttons-${i}`} flexDirection="row" gap={1} {...(bottom ? { justifyContent: 'flex-end' } : { flexShrink: 0 })}>
+        <Box flexDirection="row" gap={1} {...(bottom ? { justifyContent: 'flex-end' } : { flexShrink: 0 })}>
           {pin}
           {allOn(i) ? (
             <Button key={`all-${i}`} label="all" {...lit} onPress={() => attempt($, checkAll($), 'the check marks')}>
@@ -935,7 +933,6 @@ export const register: Register = on => {
         return (
           <Box key={`rim-${side}-${i}`} position="absolute" left={outside} right={outside} height={1} {...(side === 'top' ? { top: outside } : { bottom: outside })}>
             <Client key={`glow-${lap}-${side}-${i}`} module="./glow.tsx" width="100%" height={1} props={{
-              lap: lap as GlowLap,
               side,
               thin,
               colors: TAIL.map(k => mix(color, WHITE, k)),
@@ -958,7 +955,7 @@ export const register: Register = on => {
           {...(drawIn ? { borderDimColor: true } : {})} {...hover}
           paddingX={SPACE_X} paddingY={faint ? 0 : SPACE_Y}>
           {onClient ? client(`title-${i}`, bottom ? 'title' : 'both') : (
-            <Box key={`top-${i}`} flexDirection="row" justifyContent="space-between">
+            <Box flexDirection="row" justifyContent="space-between">
               {title}
               {bottom ? null : buttons}
             </Box>

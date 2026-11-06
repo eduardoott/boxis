@@ -485,7 +485,7 @@ test('client in the terminal: the module mounts and the check plays its frames',
 const PLAIN = 'Body.\n\n⚠️ Careful with X.\n\n✅ Done: x. ➡️ Next: y.'
 // A found Box carries its children: the kinds of the direct children of the box with that key.
 const kindsIn = async (ui: any, key: string) => ((await ui.find({ type: 'Box', key }))?.children ?? []).map((c: any) => c.props?.key ?? c.type)
-const buttonsIn = async (ui: any, key: string) => ((await ui.find({ type: 'Box', key }))?.children ?? []).filter((c: any) => c.type === 'Button').map((c: any) => c.props.key)
+const rowsOf = async (ui: any, i: number) => (await ui.find({ type: 'Box', key: `box-${i}` }))?.children ?? []
 
 test('buttons bottom, static: the title row has no Button; the pin and check come after the content', async ($, on) => {
   pulseWorld(on, { buttons: 'bottom' })
@@ -493,13 +493,16 @@ test('buttons bottom, static: the title row has no Button; the pin and check com
   const ui = await mountClient($, PLAIN)
   expect(await ui.find({ type: 'Client' })).toBeUndefined()
   // The title row holds only the title; the buttons row comes after the content, right aligned.
+  // The two rows carry no key: the nearest keyed Box, whose hover lights the buttons, is the box.
   for (const i of [0, 1, 2]) {
-    expect(await kindsIn(ui, `top-${i}`)).toEqual(['Text'])
-    expect(await kindsIn(ui, `box-${i}`)).toEqual([`top-${i}`, 'Markdown', `buttons-${i}`])
-    expect(await buttonsIn(ui, `buttons-${i}`)).toEqual([`pin-${i}`, `check-${i}`])
+    expect(await kindsIn(ui, `box-${i}`)).toEqual(['Box', 'Markdown', 'Box'])
+    const [top, , buttons] = await rowsOf(ui, i)
+    expect(top.children.map((c: any) => c.type)).toEqual(['Text'])
+    expect(buttons.children.filter((c: any) => c.type === 'Button').map((c: any) => c.props.key)).toEqual([`pin-${i}`, `check-${i}`])
   }
-  expect((await ui.find({ type: 'Box', key: 'top-1' }))?.text).toBe('warning')
-  expect((await ui.find({ type: 'Box', key: 'buttons-1' }))?.props.justifyContent).toBe('flex-end')
+  const [top1, , buttons1] = await rowsOf(ui, 1)
+  expect(top1.children[0].children).toEqual(['warning'])
+  expect(buttons1.props.justifyContent).toBe('flex-end')
   expect((await ui.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['pin-0', 'check-0', 'pin-1', 'check-1', 'pin-2', 'check-2'])
   // The check still works from the bottom row.
   await ui.press({ key: 'check-1' })

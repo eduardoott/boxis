@@ -178,7 +178,7 @@ test('animated-ii: every border bold (the thick one double), dim during the draw
   expect(await dim()).toEqual([false, true, true, false])
   expect(await glowKeys(ui)).toEqual(['glow-arrive-top-1', 'glow-arrive-bottom-1', 'glow-arrive-top-2', 'glow-arrive-bottom-2'])
   const g = (await glows(ui))[0].props.props
-  expect(g).toMatchObject({ lap: 'arrive', paint: true, paintColor: '#E0B040', boxKey: (await clients(ui))[1].boxKey, border: 'bold' })
+  expect(g).toMatchObject({ paint: true, paintColor: '#E0B040', boxKey: (await clients(ui))[1].boxKey, border: 'bold' })
   // Mid lap: the cells the head has passed stay drawn in the type colour, under the tail.
   await ui.resize({ columns: COLUMNS, rows: 1, in: 'glow-arrive-top-1' })
   await ui.advance(ARRIVAL_GLOW_MS / 4)
@@ -397,7 +397,7 @@ test('animated-ii: the pin plays the spark burst, posts pinning on the press and
   const key = (await clients(ui))[1].boxKey
   await ui.press({ key: `pin-${key}`, in: 'title-1' })
   expect(await glowKeys(ui)).toEqual(['glow-pin-top-1'])
-  expect((await glows(ui))[0].props.props).toMatchObject({ lap: 'pin', line: true, durationMs: PIN_GLOW_MS })
+  expect((await glows(ui))[0].props.props).toMatchObject({ line: true, durationMs: PIN_GLOW_MS })
   expect((await glows(ui))[0].props.props.colors[0]).toBe(mix('#E0B040', WHITE, 0.85))
   const seen = [await pinOf(ui, key)]
   for (let i = 1; i < PIN_SPARK_FRAMES.length; i++) {
@@ -413,3 +413,19 @@ test('animated-ii: the pin plays the spark burst, posts pinning on the press and
   expect(await glowKeys(ui)).toEqual([])
   await ui.unmount()
 })
+
+// Neon: the pulse window outlasts the draw-in; once the box has arrived a pin press gets its lap.
+test('animated-ii: a pin pressed after the draw-in, still inside the pulse window, runs the pin lap', async ($, on) => {
+  world(on, { skin: 'animated-ii' })
+  const ui = await mountClient($, 'terminal')
+  await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
+  await $.turn.complete(turnEnd(PULSING))
+  expect(await glowKeys(ui)).toEqual(['glow-arrive-top-1', 'glow-arrive-bottom-1', 'glow-arrive-top-2', 'glow-arrive-bottom-2'])
+  await ui.advance(ARRIVAL_GLOW_MS)
+  expect(await glowKeys(ui)).toEqual([])
+  const key = (await clients(ui))[1].boxKey
+  await ui.press({ key: `pin-${key}`, in: 'title-1' })
+  expect(await glowKeys(ui)).toEqual(['glow-pin-top-1'])
+  await ui.unmount()
+})
+

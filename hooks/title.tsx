@@ -39,10 +39,8 @@ export const CHECK_FRAMES = ['○', '◔', '◔', '◑', '◑', '◕', '◕', '�
 const DIMMED_FRAMES = [0, 1, 3, 5]
 const STILL_DOT = '●'
 export const PIN = { pinned: '📌', unpinned: '⚲' }
-// The pin spins once before landing; unpinning spins it back.
 export const PIN_FRAMES = ['◜', '◠', '◝', '◞', '◡', '◟']
 export const PIN_FRAME_MS = 70
-// Neon: a spark burst instead of the spin, pinning and unpinning alike.
 export const PIN_SPARK_FRAMES = ['✧', '✦', '✧', '✦']
 export const PIN_SPARK_MS = 80
 // After the pin posts, the pinned prop confirms it; past this the button falls back to the prop.

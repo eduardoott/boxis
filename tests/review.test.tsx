@@ -6,7 +6,7 @@ import { splitTables } from '../hooks/table'
 import { DEFAULTS, apply, readConfig } from '../hooks/config'
 import { openFence, fenceOpenAtEnd, closesFence } from '../hooks/fence'
 import { FRAME_MS, CHECK_FRAMES } from '../hooks/title'
-import { MAX_TEXT, PANE_BUDGET, PINS_BUDGET, fitBudget, startClosing, register, pinText, titleFailed, type Pin } from '../hooks/register'
+import { MAX_TEXT, PANE_BUDGET, PINS_BUDGET, fitBudget, startClosing, register, pinText, titleFailed, glowFailed, type Pin } from '../hooks/register'
 
 type Options = { failSet?: (key: string) => boolean; noSession?: boolean }
 function world(on: On, start: Record<string, unknown> = {}, op: Options = {}) {
@@ -343,4 +343,27 @@ test('ui.fault on the Client title: that answer\'s box falls back to the plain t
   // The buttons Client of a box with the buttons at the bottom counts as a title too.
   await hooks['ui.fault']({}, { ...fault, element: 'title-b-2' }, next)
   expect(titleFailed('mf', 'title-b-2')).toBe(true)
+})
+
+// The kit loads its own copy of the module, so the drawing cannot see a fault raised here: the
+// bookkeeping is checked, and canGlow reads glowFailed for the box it draws.
+test('ui.fault on a rim glow: that box of that answer draws no glow, the other boxes still can', async () => {
+  const hooks: Record<string, Function> = {}
+  const on = ((name: string, a: unknown, b?: unknown) => {
+    hooks[name] = (typeof a === 'function' ? a : b) as Function
+    return { catch: () => undefined }
+  }) as never
+  register(on, {} as never)
+  const next = (e: unknown) => ({ seen: e })
+  const fault = { surface: 'terminal', component: 'AssistantMessage', requestId: 'gf', element: 'glow-arrive-top-1', module: 'hooks/glow.tsx', phase: 'render', reason: 'boom' }
+  expect(glowFailed('gf', 1)).toBe(false)
+  expect(await hooks['ui.fault']({}, fault, next)).toEqual({ seen: fault })
+  expect(glowFailed('gf', 1)).toBe(true)
+  expect(glowFailed('gf', 2)).toBe(false)
+  expect(glowFailed('other', 1)).toBe(false)
+  // Any lap and side of the box counts, and the box index is the last segment, not its first digit.
+  await hooks['ui.fault']({}, { ...fault, element: 'glow-pin-top-12' }, next)
+  expect(glowFailed('gf', 12)).toBe(true)
+  // A glow fault is not a title fault: the title Client stays.
+  expect(titleFailed('gf', 'title-1')).toBe(false)
 })
