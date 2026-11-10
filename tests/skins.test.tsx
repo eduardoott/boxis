@@ -4,7 +4,7 @@ import { test, expect, mock } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import { GREEN, WHITE, mix } from '../hooks/config'
 import { ARRIVAL_GLOW_MS, BLINK_MS, BLINKS, CLOSE_MS, PIN_GLOW_MS, type Pin } from '../hooks/register'
-import { CHECK_FRAMES, FRAME_MS, PIN_FRAMES, PIN_FRAME_MS, PIN_SPARK_FRAMES, PIN_SPARK_MS, PIN_WAIT_MS, SHIMMER_GAP_STEPS, SHIMMER_STEP_MS, WIPE_STEPS } from '../hooks/title'
+import { UP_TO_LABEL, UP_TO_HIDE_MS, CHECK_FRAMES, FRAME_MS, PIN_FRAMES, PIN_FRAME_MS, PIN_SPARK_FRAMES, PIN_SPARK_MS, PIN_WAIT_MS, SHIMMER_GAP_STEPS, SHIMMER_STEP_MS, WIPE_STEPS } from '../hooks/title'
 
 const PULSING = 'Body.\n\n```bash\necho hi\n```\n\n⚠️ Careful with X.\n\n❓ Do A?\n\n✅ Done: x. ➡️ Next: y.'
 const NORMAL = ['#7F77DD', '#E0B040', '#4A90E2', '#5CB85C']
@@ -73,14 +73,13 @@ for (const skin of ['none', 'animated-i', 'animated-ii']) test(`${skin}: box hov
   await ui.unmount()
 })
 
-test('animated-i, static drawing: the pin, all and ○ buttons light under the pointer by hover', async ($, on) => {
+test('animated-i, static drawing: the pin and ○ buttons light under the pointer by hover', async ($, on) => {
   world(on, { skin: 'animated-i' })
   await $.turn.complete(turnEnd(PULSING))
   const ui = await mountClient($, 'vscode')
   const hover = async (key: string) => hoverOf(await ui.drawn(), key)
   expect(await hover('pin-1')).toEqual({ color: '#E0B040', dimColor: false })
   expect(await hover('check-1')).toEqual({ color: '#E0B040', dimColor: false })
-  expect(await hover('all-3')).toEqual({ color: '#5CB85C', dimColor: false })
   await ui.press({ key: 'check-1' })
   expect(await hover('check-1')).toBeUndefined()
   await ui.unmount()
@@ -429,3 +428,41 @@ test('animated-ii: a pin pressed after the draw-in, still inside the pulse windo
   await ui.unmount()
 })
 
+
+// (f) The pointer on the check reveals "up to here" through the surface's hover, with no column count:
+// in the CLI the region's columns can be wider than what is drawn, and a count never reaches the check.
+test('animated-i: "up to here" hides until the pointer is on ○ or on itself, and a press checks up to the box', async ($, on) => {
+  const { disk } = world(on, { skin: 'animated-i' })
+  const ui = await mountClient($)
+  const key = (await clients(ui))[1].boxKey
+  const scope = await ui.find({ type: 'Box', key: `upto-scope-${key}`, in: 'title-1' })
+  const label = scope?.children?.[0]
+  expect(label?.props?.display).toBe('none')
+  expect(label?.hover).toEqual({ display: 'flex' })
+  expect(label?.children?.[0]?.props?.key).toBe(`upto-${key}`)
+  expect(label?.children?.[0]?.props?.label).toBe(UP_TO_LABEL)
+  expect(scope?.children?.[1]?.props?.key).toBe(`check-${key}`)
+  await ui.press({ key: `upto-${key}`, in: 'title-1' })
+  expect(disk.checked).toEqual([`${key.slice(0, key.lastIndexOf(':'))}:0`, key])
+  await ui.unmount()
+})
+
+// (g) The desktop app paints no hover inside a Client: there the pointer on the check reveals the same
+// element by state, and leaving hides it after the grace.
+test('animated-i: the pointer on the last cells shows "up to here" by state, and it hides after leaving', async ($, on) => {
+  world(on, { skin: 'animated-i' })
+  const ui = await mountClient($)
+  const key = (await clients(ui))[1].boxKey
+  await ui.resize({ columns: COLUMNS, rows: 1, in: 'title-1' })
+  const shown = async () => (await ui.find({ type: 'Box', key: `upto-scope-${key}`, in: 'title-1' }))?.children?.[0]?.props?.display
+  expect(await shown()).toBe('none')
+  await ui.pointer({ type: 'move', x: COLUMNS - 1, y: 0, in: 'title-1' })
+  expect(await shown()).toBe('flex')
+  await ui.pointer({ type: 'move', x: COLUMNS - 1 - UP_TO_LABEL.length, y: 0, in: 'title-1' })
+  await ui.advance(UP_TO_HIDE_MS)
+  expect(await shown()).toBe('flex')
+  await ui.pointer({ type: 'move', x: 1, y: 0, in: 'title-1' })
+  await ui.advance(UP_TO_HIDE_MS)
+  expect(await shown()).toBe('none')
+  await ui.unmount()
+})

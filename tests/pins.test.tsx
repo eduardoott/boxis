@@ -150,8 +150,9 @@ test('client: the title carries the pin, the click posts { pin } and the hook pi
   expect(props.map((p: any) => p.pinned)).toEqual([false, false, false])
   await ui.resize({ columns: 40, rows: 1, in: 'title-1' })
   const buttons = (await ui.findAll({ type: 'Button', in: 'title-1' } as never)).map((b: any) => b.key)
-  expect(buttons).toEqual([`pin-${props[1].boxKey}`, `check-${props[1].boxKey}`])
-  expect(withHover(await ui.drawn({ in: 'title-1' } as never))).toEqual([])
+  expect(buttons).toEqual([`pin-${props[1].boxKey}`, `upto-${props[1].boxKey}`, `check-${props[1].boxKey}`])
+  // The only surface hover in the Client is the "up to here" reveal; the buttons light by the pointer.
+  expect(withHover(await ui.drawn({ in: 'title-1' } as never))).toEqual([{ props: { display: 'none' }, hover: { display: 'flex' } }])
   await ui.press({ key: `pin-${props[1].boxKey}`, in: 'title-1' })
   // The pin spins first; the post comes at the end of the frames.
   expect(pins()).toEqual([])
@@ -380,3 +381,4 @@ test('check off: the pane has no check button and its footer leaves ○ out', as
   }
   await msg.unmount()
 })
+

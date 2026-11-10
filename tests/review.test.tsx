@@ -6,7 +6,7 @@ import { splitTables } from '../hooks/table'
 import { DEFAULTS, apply, readConfig } from '../hooks/config'
 import { openFence, fenceOpenAtEnd, closesFence } from '../hooks/fence'
 import { FRAME_MS, CHECK_FRAMES } from '../hooks/title'
-import { MAX_TEXT, PANE_BUDGET, PINS_BUDGET, fitBudget, startClosing, register, pinText, titleFailed, glowFailed, type Pin } from '../hooks/register'
+import { signature, MAX_TEXT, PANE_BUDGET, PINS_BUDGET, fitBudget, startClosing, register, pinText, titleFailed, glowFailed, type Pin } from '../hooks/register'
 
 type Options = { failSet?: (key: string) => boolean; noSession?: boolean }
 function world(on: On, start: Record<string, unknown> = {}, op: Options = {}) {
@@ -109,16 +109,15 @@ test('pinText: cut with a visible …, closing the open fence (of 3 or 4) within
 
 // 2. A failed write becomes a toast.
 
-test('failed writes: pin, check, all and the config pane warn in a toast', async ($, on) => {
+test('failed writes: pin, check and the config pane warn in a toast', async ($, on) => {
   const { toasts } = world(on, {}, { failSet: () => true })
   await $.turn.complete(turnEnd('Body.\n\n⚠️ Careful.'))
   const ui = await msg($, 'Body.\n\n⚠️ Careful.')
   await ui.press({ key: 'pin-1' })
   await ui.press({ key: 'check-1' })
-  await ui.press({ key: 'all-1' })
   const cfg = await pane($, 'boxis-config')
   await cfg.press({ key: 'intensity-up' })
-  expect(toasts).toEqual(['Boxis: could not save the pins', 'Boxis: could not save the check marks', 'Boxis: could not save the check marks', 'Boxis: could not save the config'])
+  expect(toasts).toEqual(['Boxis: could not save the pins', 'Boxis: could not save the check marks', 'Boxis: could not save the config'])
   // Nothing changed on screen: the memory copy only changes after the write.
   expect(await ui.find({ type: 'Text', text: '✓' })).toBeUndefined()
   expect(await cfg.find({ type: 'Text', text: /^ 50$/ })).toBeDefined()
@@ -168,7 +167,7 @@ test('check: a click on the stale copy applies the state shown, and does not tog
   await m.unmount()
 })
 
-test('client: "all" in the middle of the check frames is not undone at their end', async ($, on) => {
+test('client: "up to here" in the middle of the check frames is not undone at their end', async ($, on) => {
   const { clock } = world(on, { config: { animation: 'client' } })
   const ui = await msg($, 'Body.\n\n⚠️ Careful.\n\n❓ A or B?')
   const props = async () => (await ui.findAll({ type: 'Client' })).filter((c: any) => c.key.startsWith('title-')).map((c: any) => c.props.props)
@@ -176,7 +175,7 @@ test('client: "all" in the middle of the check frames is not undone at their end
   const key = (await props())[1].boxKey
   await ui.press({ key: `check-${key}`, in: 'title-1' })
   await ui.advance(FRAME_MS)
-  await ui.post({ all: true }, { in: 'title-2' })
+  await ui.post({ upTo: (await props())[2].boxKey }, { in: 'title-2' })
   expect((await props())[1].checked).toBe(true)
   await ui.advance(FRAME_MS * CHECK_FRAMES.length)
   await clock.advance(2000)
@@ -188,37 +187,38 @@ test('client: "all" in the middle of the check frames is not undone at their end
   await ui.unmount()
 })
 
-// 4. "all" in a long conversation.
+// 4. "up to here" in a long conversation.
 
-test('all: with over 500 boxes and the answer arriving in chunks, checks the whole conversation', async ($, on) => {
-  const { disk } = world(on)
+test('up to here: with over 500 boxes and the answer arriving in chunks, the last box checks the whole conversation', async ($, on) => {
+  const { disk } = world(on, { config: { skin: 'animated-i' } })
   const answer = (i: number) => `Body ${i}.\n\n⚠️ Warn ${i}.\n\n❓ Q ${i}?\n\n✅ Done ${i}.`
   const N = 130
+  on('session.messages', async () => ({ value: Array.from({ length: N + 1 }, (_, i) => ({ role: 'assistant', text: answer(i), toolUses: [] })) }) as never)
   for (let i = 0; i < N; i++) await (await msg($, answer(i), `m${i}`)).unmount()
   await $.turn.start({ text: 'hi', turnId: 't' } as never)
   const last = answer(N)
   for (let k = 10; k < last.length; k += 10) await (await msg($, last.slice(0, k), `m${N}`)).unmount()
   await $.turn.complete(turnEnd(last))
   const ui = await msg($, last, `m${N}`)
-  await ui.press({ key: 'all-3' })
+  await ui.post({ upTo: `${signature(last)}:3` }, { in: 'title-3' })
   await ui.unmount()
   // Only the boxes of whole answers: the streaming chunks are left out.
   expect((disk.checked as string[]).length).toBe((N + 1) * 4)
   const first = await msg($, answer(0), 'm0')
-  expect((await first.findAll({ type: 'Text', text: '✓' })).length).toBe(4)
+  expect((await first.findAll({ type: 'Client' })).filter((c: any) => c.key.startsWith('title-') && c.props.props.checked).length).toBe(4)
   await first.unmount()
 })
 
-test('check marks: at the 2000 cap the latest checked stay, even those "all" checks again', async ($, on) => {
-  const { disk } = world(on)
+test('check marks: at the 2000 cap the latest checked stay, even those "up to here" checks again', async ($, on) => {
+  const { disk } = world(on, { config: { skin: 'animated-i' } })
   const text = 'Body.\n\n⚠️ Careful.'
   await $.turn.complete(turnEnd(text))
   const ui = await msg($, text)
-  await ui.press({ key: 'check-0' })
+  await ui.post({ checked: `${signature(text)}:0`, on: true }, { in: 'title-0' })
   const x = (disk.checked as string[])[0]!
   const junk = Array.from({ length: 1999 }, (_, i) => `old${i}:0`)
   disk.checked = [x, ...junk]
-  await ui.press({ key: 'all-1' })
+  await ui.post({ upTo: `${signature(text)}:1` }, { in: 'title-1' })
   const checked = disk.checked as string[]
   expect(checked.length).toBe(2000)
   expect(checked.slice(-2)).toEqual([x, x.replace(/:0$/, ':1')])
@@ -366,4 +366,31 @@ test('ui.fault on a rim glow: that box of that answer draws no glow, the other b
   expect(glowFailed('gf', 12)).toBe(true)
   // A glow fault is not a title fault: the title Client stays.
   expect(titleFailed('gf', 'title-1')).toBe(false)
+})
+
+// 5. "up to here": the box, the boxes above it in its answer, and every earlier answer.
+
+test('up to here: checks in conversation order, not drawing order, and leaves pinned and later boxes alone', async ($, on) => {
+  const { disk } = world(on, { config: { skin: 'animated-i' } })
+  const answer = (i: number) => `Body ${i}.\n\n⚠️ Warn ${i}.\n\n✅ Done ${i}.`
+  on('session.messages', async () => ({ value: [0, 1, 2, 3].map(i => ({ role: 'assistant', text: answer(i), toolUses: [] })) }) as never)
+  // Drawn out of order, as when the person scrolls up into the history.
+  for (const i of [2, 3, 0, 1]) await (await msg($, answer(i), `m${i}`)).unmount()
+  const ui = await msg($, answer(2), 'm2')
+  const key = (i: number, box: number) => `${signature(answer(i))}:${box}`
+  await ui.post({ pin: key(0, 1), on: true }, { in: 'title-1' })
+  await ui.post({ upTo: key(2, 1) }, { in: 'title-1' })
+  expect([...(disk.checked as string[])].sort()).toEqual([key(0, 0), key(0, 2), key(1, 0), key(1, 1), key(1, 2), key(2, 0), key(2, 1)].sort())
+  await ui.unmount()
+})
+
+test('up to here: an answer the session does not know checks only its own boxes up to the one pressed', async ($, on) => {
+  const { disk } = world(on, { config: { skin: 'animated-i' } })
+  on('session.messages', async () => ({ value: [{ role: 'assistant', text: 'Other.', toolUses: [] }] }) as never)
+  await (await msg($, 'Other.', 'm0')).unmount()
+  const text = 'Body.\n\n⚠️ Careful.\n\n✅ Done.'
+  const ui = await msg($, text, 'm1')
+  await ui.post({ upTo: `${signature(text)}:1` }, { in: 'title-1' })
+  expect(disk.checked).toEqual([`${signature(text)}:0`, `${signature(text)}:1`])
+  await ui.unmount()
 })

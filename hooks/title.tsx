@@ -17,7 +17,6 @@ export type TitleProps = {
   pulse: boolean
   boxKey: string
   // Only on the last box of the last answer: the button that checks every box of the conversation.
-  all?: boolean
   // The box is in this session's pin list: the button left of the check shows 📌.
   pinned?: boolean
   // The hook is closing the box (the border blinks): the title wipes out while the ✓ fills.
@@ -56,6 +55,13 @@ export const BLINK_MS = 150
 export const CLOSE_MS = 2 * BLINKS * BLINK_MS
 export const WIPE_STEP_MS = 100
 export const WIPE_STEPS = Math.ceil(CLOSE_MS / WIPE_STEP_MS)
+// The pointer on the check shows "up to here" left of it, by two roads on one element: the CLI paints the
+// hover but its region can be wider than what is drawn, so a column count never reaches the check; the
+// desktop app does not paint a hover inside a Client, so there the column count reveals it.
+export const UP_TO_LABEL = 'up to here'
+export const UP_TO_HIDE_MS = 300
+// The check is the last cell of the row; the one before it is the gap.
+const CHECK_CELLS = 2
 
 type Local = {
   step: number
@@ -63,6 +69,7 @@ type Local = {
   pinFrame: number
   wipe: number
   hot: boolean
+  upTo: boolean
   // The column of the shimmer head; past the title and its tail, the rest of the gap.
   shimmer: number
   // What does not redraw: the timers, and the flags that stop a pulse restarting or a click repeating.
@@ -72,6 +79,7 @@ type Local = {
     pin?: () => void; pinFrames?: string[]; pinWaiting?: boolean; pinShown?: boolean; pinWait?: () => void
     wipe?: () => void
     shimmer?: () => void
+    hide?: () => void
     props: TitleProps
   }
 }
@@ -83,13 +91,30 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
   const { Box, Text, Button } = surface.elements
   let state = surface.state
   if (state === undefined) {
-    state = { step: 0, frame: 0, pinFrame: 0, wipe: 0, hot: false, shimmer: 0, ref: { props } }
+    state = { step: 0, frame: 0, pinFrame: 0, wipe: 0, hot: false, upTo: false, shimmer: 0, ref: { props } }
     surface.setState(state)
     const initial = state
     const latest = () => surface.state ?? initial
     const r = state.ref
+    // The pointer still on "up to here" keeps it: the grace counts only from leaving both, so the pointer can cross to it.
+    const pointUpTo = (e: { type: string; x: number }) => {
+      const cur = latest()
+      const keep = CHECK_CELLS + (cur.upTo ? UP_TO_LABEL.length + 1 : 0)
+      if (e.type !== 'enter' && e.type !== 'leave' && e.x >= surface.columns - keep) {
+        r.hide?.()
+        r.hide = undefined
+        if (!cur.upTo) surface.setState({ ...cur, upTo: true })
+      } else if (cur.upTo && !r.hide) {
+        r.hide = surface.every(UP_TO_HIDE_MS, () => {
+          r.hide?.()
+          r.hide = undefined
+          surface.setState({ ...latest(), upTo: false })
+        })
+      }
+    }
     // Lit buttons while the pointer is on the line; in Neon the title instance also runs the shimmer.
     surface.onPointer(e => {
+      if (r.props.part !== 'title') pointUpTo(e)
       if (e.type !== 'enter' && e.type !== 'leave') return
       const cur = latest()
       const hot = e.type === 'enter'
@@ -163,7 +188,7 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
   // A Button, and not onPointer on the Text: that keeps the mouse arrow over the check.
   const press = () => {
     if (ref.check || ref.waiting) return
-    // The requested state, not a toggle: "all" in the middle of the frames is not undone at their end.
+    // The requested state, not a toggle: "up to here" in the middle of the frames is not undone at their end.
     if (ref.props.checked) {
       surface.post({ checked: ref.props.boxKey, on: false })
       return
@@ -243,6 +268,12 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
       </Text>
     </Box>
   )
+  const pressUpTo = () => {
+    ref.hide?.()
+    ref.hide = undefined
+    surface.setState({ ...current(), upTo: false })
+    surface.post({ upTo: ref.props.boxKey })
+  }
   // A dim label lights in the box colour while the pointer is on the line.
   const dim = (text: string) => hot ? <Text color={props.color}>{text}</Text> : <Text dimColor>{text}</Text>
   const buttons = (
@@ -250,16 +281,18 @@ const Title: ClientModule<TitleProps, Local> = (props, surface) => {
       <Button key={`pin-${props.boxKey}`} label={pinGlyph} onPress={pressPin}>
         {ref.pin ? <Text color={props.color}>{pinGlyph}</Text> : pinOn ? <Text>{pinGlyph}</Text> : dim(pinGlyph)}
       </Button>
-      {props.all ? (
-        <Button key={`all-${props.boxKey}`} label="all" onPress={() => surface.post({ all: true })}>
-          {dim('all')}
+      <Box key={`upto-scope-${props.boxKey}`} flexDirection="row" gap={1}>
+        <Box {...(state.upTo ? { display: 'flex' } : { display: 'none', hover: { display: 'flex' } })}>
+          <Button key={`upto-${props.boxKey}`} label={UP_TO_LABEL} onPress={pressUpTo}>
+            {dim(UP_TO_LABEL)}
+          </Button>
+        </Box>
+        <Button key={`check-${props.boxKey}`} label={glyph} onPress={press}>
+          {ref.check ? <Text color={props.checkColor} dimColor={DIMMED_FRAMES.includes(state.frame)}>{glyph}</Text>
+            : props.checked || ref.waiting ? <Text color={props.checkColor} bold>{glyph}</Text>
+            : dim(glyph)}
         </Button>
-      ) : null}
-      <Button key={`check-${props.boxKey}`} label={glyph} onPress={press}>
-        {ref.check ? <Text color={props.checkColor} dimColor={DIMMED_FRAMES.includes(state.frame)}>{glyph}</Text>
-          : props.checked || ref.waiting ? <Text color={props.checkColor} bold>{glyph}</Text>
-          : dim(glyph)}
-      </Button>
+      </Box>
     </Box>
   )
   if (props.part === 'title') return title

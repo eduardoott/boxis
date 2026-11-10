@@ -65,7 +65,9 @@ Claude can make the same changes through the `design` tool, for example "make th
 
 ## Check
 
-Each box has a ○ on its title line. Clicking it marks the box as understood: it turns green and its text is dimmed and struck. The last box of the last answer also has **all**, which checks every box drawn in the conversation. Check marks are kept between sessions.
+Each box has a ○ on its title line. Clicking it marks the box as understood: it turns green and its text is dimmed and struck. Check marks are kept between sessions.
+
+In the animated skins, resting the pointer on a ○ shows **up to here** beside it. It checks that box, the boxes above it in the same answer and every earlier answer, except the pinned ones. It shows only while the pointer is on the ○ or on the button. The static skin (None) does not get this button.
 
 ## Pins
 

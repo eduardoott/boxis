@@ -218,7 +218,7 @@ const bordersOf = async (ui: Mounted) => (await ui.findAll({ type: 'Box' })).fil
 
 // The retired 'svg' animation and the old key: a saved one reads as skin none.
 for (const config of [{ skin: 'none' }, { animation: 'svg' }]) {
-  test(`${'skin' in config ? 'skin none' : 'animation svg saved (reads as none)'}: the turn end redraws only once (the "check all" moves to the new answer), nothing pulses`, async ($, on) => {
+  test(`${'skin' in config ? 'skin none' : 'animation svg saved (reads as none)'}: the turn end redraws only once (the answer joins "up to here"), nothing pulses`, async ($, on) => {
     const { clock, count } = pulseWorld(on, config)
     const ui = await $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', props: { text: PULSING, isFirstOfReply: true } })
     const before = count.draws
@@ -529,7 +529,7 @@ test('buttons bottom, animated skin: two Clients per box, the title on top and t
   expect(await dotOf(ui, 'title-1')).toBe('● ')
   expect(await ui.find({ type: 'Button', in: 'title-1' })).toBeUndefined()
   expect(await dotOf(ui, 'title-b-1')).toBeUndefined()
-  expect((await ui.findAll({ type: 'Button', in: 'title-b-1' })).map((b: any) => b.key)).toEqual([`pin-${pair[1].boxKey}`, `check-${pair[1].boxKey}`])
+  expect((await ui.findAll({ type: 'Button', in: 'title-b-1' })).map((b: any) => b.key)).toEqual([`pin-${pair[1].boxKey}`, `upto-${pair[1].boxKey}`, `check-${pair[1].boxKey}`])
   // The check plays its frames in the buttons instance and the box turns green.
   await ui.press({ key: `check-${pair[1].boxKey}`, in: 'title-b-1' })
   await ui.advance(FRAME_MS * CHECK_FRAMES.length)
@@ -540,38 +540,3 @@ test('buttons bottom, animated skin: two Clients per box, the title on top and t
   await ui.unmount()
 })
 
-test('"check all" shows only on the last box of the last answer and checks the whole conversation', async ($, on) => {
-  mock.store(on, {})
-  on('ui.render', { component: 'AssistantMessage' }, async ($, e) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>{`below:${e.props.text}`}</Text>
-  })
-  on('turn.start', ($, e) => ({ turnId: e.turnId }))
-  on('turn.complete', ($, e) => ({ text: e.answer }))
-  const older = 'First.\n\n⚠️ Risk A.'
-  const newer = 'Second.\n\n❓ Do B?\n\n✅ Done: x. ➡️ Next: y.'
-  const mount = (requestId: string, text: string) => $.ui.mount({ plugin: 'boxis', surface: 'desktop', component: 'AssistantMessage', requestId, props: { text, isFirstOfReply: true } } as never)
-  const dimmed = async (ui: Awaited<ReturnType<typeof mount>>) =>
-    (await ui.findAll({ type: 'Markdown' })).filter(m => m.props.dimColor).map(m => m.props.text)
-
-  // An older answer drawn, a new turn arrives: only the new one is the last.
-  const a = await mount('msg-a', older)
-  expect(await a.find({ type: 'Button', text: 'all'})).toBeUndefined()
-  await $.turn.start({ turnId: 't1' } as never)
-  await $.turn.complete(turnEnd(newer))
-  const b = await mount('msg-b', newer)
-  expect(await a.find({ type: 'Button', text: 'all'})).toBeUndefined()
-  expect((await b.findAll({ type: 'Button', text: 'all'})).map(x => x.key)).toEqual(['all-2'])
-  expect(await dimmed(a)).toEqual([])
-  expect(await dimmed(b)).toEqual([])
-
-  await b.press({ key: 'all-2' })
-  expect(await dimmed(a)).toEqual(['~~First.~~', '~~Risk A.~~'])
-  expect(await dimmed(b)).toEqual(['~~Second.~~', '~~Do B?~~', '~~Done: x. ➡️ Next: y.~~'])
-  // The button stays and the check of one box still unchecks only that box.
-  expect(await b.find({ type: 'Button', text: 'all'})).toBeDefined()
-  await a.press({ key: 'check-1' })
-  expect(await dimmed(a)).toEqual(['~~First.~~'])
-  await a.unmount()
-  await b.unmount()
-})

@@ -161,7 +161,7 @@ export function signature(text: string): string {
   return `${(h >>> 0).toString(36)}.${text.length.toString(36)}`
 }
 
-// "Check all": every answer the screen drew in this session (the history on opening and the new
+// "Up to here": every answer the screen drew in this session (the history on opening and the new
 // ones), by signature with its box count. A box that was never drawn is left out.
 const drawn = new Map<string, number>()
 const MAX_DRAWN = 1000
@@ -173,18 +173,34 @@ function seeDrawn(key: string, boxes: number) {
     drawn.delete(old)
   }
 }
-async function checkAll($: EngineInterface) {
-  const all: string[] = []
-  for (const [key, n] of drawn) for (let i = 0; i < n; i++) all.push(`${key}:${i}`)
-  await check($, all, true)
+// "Up to here": the box, the earlier boxes of its answer and every answer before it. Pinned boxes are
+// left out: a pin is kept on purpose, and checking would unpin it.
+// drawn is in drawing order, so the conversation order comes from the session. An answer that matches
+// no message is left alone: checking too little beats checking too much.
+async function checkUpTo($: EngineInterface, boxId: string) {
+  const cut = boxId.lastIndexOf(':')
+  const answer = boxId.slice(0, cut)
+  const last = Number(boxId.slice(cut + 1))
+  if (!Number.isInteger(last)) return
+  const order = await answerOrder($)
+  const before = order.includes(answer) ? order.slice(0, order.indexOf(answer)) : []
+  const ids: string[] = []
+  for (const key of before) for (let i = 0; i < (drawn.get(key) ?? 0); i++) ids.push(`${key}:${i}`)
+  for (let i = 0; i <= last; i++) ids.push(`${answer}:${i}`)
+  const pinned = new Set((await readPins($)).map(p => p.id))
+  await check($, ids.filter(id => !pinned.has(id)), true)
 }
-
-// The last answer of the conversation, trimmed: only it gets the "check all" button. On opening the
-// session it comes from the transcript; then from each turn end. The block drawn is its tail.
-let lastAnswer = ''
-function isLast(text: string): boolean {
-  const trimmed = text.trim()
-  return !inTurn && trimmed.length > 0 && lastAnswer.endsWith(trimmed)
+// The drawn answers in conversation order. The screen may draw a message without its leading line breaks.
+async function answerOrder($: EngineInterface): Promise<string[]> {
+  let messages: readonly { role: string; text: string }[] = []
+  try { messages = await $.session.messages() } catch {}
+  const order: string[] = []
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.text) continue
+    const key = [m.text, m.text.replace(/^\n+/, ''), m.text.trim()].map(signature).find(k => drawn.has(k))
+    if (key && !order.includes(key)) order.push(key)
+  }
+  return order
 }
 
 // Pulse of the new answer (animated skins), by signature of the trimmed text: turn.complete
@@ -610,13 +626,6 @@ export const register: Register = on => {
       },
     })
     await fresh($)
-    try {
-      const messages = await $.session.messages()
-      if (Array.isArray(messages)) {
-        const u = [...messages].reverse().find(m => m.role === 'assistant' && m.text.trim())
-        lastAnswer = u?.text.trim() ?? ''
-      }
-    } catch {}
     return r
   })
 
@@ -655,10 +664,8 @@ export const register: Register = on => {
     inTurn = false
     try {
       const text = e.reason === 'answer' && typeof e.answer === 'string' ? e.answer.trim() : ''
-      if (text) {
-        lastAnswer = text
-        $.ui.invalidate('ui.render')
-      }
+      // Drawn again outside the turn, the answer joins the ones "up to here" can reach.
+      if (text) $.ui.invalidate('ui.render')
       const skin = (await current($)).skin
       if (text && skin !== 'none') {
         const chain: Chain = { frame: 0 }
@@ -672,13 +679,14 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The title's check (animated skins) posts "closing" on the click and "checked" after the frames;
+  // The title's check (animated skins) posts "closing" on the click and "checked" after the frames,
+  // and "upTo" from the button the pointer on the check reveals;
   // the pin posts "pinning" (Neon) on the click and "pin" after its frames; the rim glow posts
   // "arrived" at the end of the draw-in.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { checked?: unknown; closing?: unknown; all?: unknown; pin?: unknown; on?: unknown; pinning?: unknown; arrived?: unknown } | null
+    const data = e.data as { checked?: unknown; closing?: unknown; upTo?: unknown; pin?: unknown; on?: unknown; pinning?: unknown; arrived?: unknown } | null
     if (!(e.element.startsWith('title-') || e.element.startsWith('glow-')) || !data || typeof data !== 'object') return next(e)
-    if (data.all === true) { await checkAll($); return {} }
+    if (typeof data.upTo === 'string') { await checkUpTo($, data.upTo); return {} }
     if (typeof data.closing === 'string') { startClosing($, data.closing); return {} }
     if (typeof data.pinning === 'string') { startPinning($, data.pinning); return {} }
     if (typeof data.arrived === 'string') { arrive($, data.arrived); return {} }
@@ -853,13 +861,10 @@ export const register: Register = on => {
     const pieces = e.props.text.length > MAX_SPLIT ? null : split(e.props.text)
     const single = pieces === null || pieces.length <= 1 && (pieces[0]?.type ?? 'body') === 'body' && !pieces[0]?.title
     const boxCount = single ? 1 : pieces.length
-    // Inside the turn the text still arrives in chunks: each length would be a separate answer for "all".
+    // Inside the turn the text still arrives in chunks: each length would be a separate answer for "up to here".
     if (!inTurn) seeDrawn(id, boxCount)
     remember(requests, id, e.requestId)
     const pinned = new Set((await readPins($)).map(p => p.id))
-    // The "check all" button sits on the last box of the last answer, next to its check.
-    const last = cfg.check && !e.props.isSummary && isLast(e.props.text)
-    const allOn = (i: number) => last && i === boxCount - 1
     const columns = columnsOf(e.viewport)
 
     const animated = cfg.skin !== 'none'
@@ -922,7 +927,6 @@ export const register: Register = on => {
         dot: PULSING_TYPES.includes(type),
         pulse: startPulse,
         boxKey: key,
-        all: allOn(i),
         pinned: isPinned,
         closing: !!closes,
         skin: cfg.skin as TitleProps['skin'],
@@ -934,11 +938,6 @@ export const register: Register = on => {
       const buttons = (
         <Box flexDirection="row" gap={1} {...(bottom ? { justifyContent: 'flex-end' } : { flexShrink: 0 })}>
           {pin}
-          {allOn(i) ? (
-            <Button key={`all-${i}`} label="all" {...lit} onPress={() => attempt($, checkAll($), 'the check marks')}>
-              <Text dimColor>all</Text>
-            </Button>
-          ) : null}
           {cfg.check ? (
             <Button key={`check-${i}`} label={marked ? '✓' : '○'} {...(marked ? {} : lit)} onPress={() => attempt($, check($, [key], !marked), 'the check marks')}>
               <Text color={marked ? GREEN : undefined} bold={marked} dimColor={!marked}>{marked ? '✓' : '○'}</Text>
