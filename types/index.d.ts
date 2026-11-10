@@ -4,6 +4,8 @@ declare module 'claude-code' {
   interface PluginState {
     boxis: {
       celebrate: number
+      /** Boxes the last click marked, set just before `celebrate` changes. */
+      checks: number
     }
   }
 }

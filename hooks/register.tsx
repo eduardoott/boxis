@@ -142,13 +142,17 @@ async function check($: EngineInterface, ids: string[], on: boolean) {
   // A box marked as understood no longer needs keeping at hand; unchecking never pins it back.
   if (on && (await readPins($)).some(p => these.has(p.id))) await savePins($, list => list.filter(p => !these.has(p.id)))
   $.ui.invalidate('ui.render')
-  if (on && ids.some(id => !before.includes(id))) celebrate($)
+  const added = on ? [...these].filter(id => !before.includes(id)).length : 0
+  if (added) celebrate($, added)
 }
 // A signal other mods can listen to (to play an effect, say): a state write, not a slash command, so it leaves
 // no chat line and costs no tokens. With nobody listening, nothing happens.
 const CELEBRATE = { plugin: 'boxis', key: 'celebrate' } as const
-function celebrate($: EngineInterface) {
-  void $.clock.now().then(t => $.state.set(CELEBRATE, t)).catch(() => {})
+// How many boxes the click marked ("up to here" marks many), written just before the celebrate bump.
+const CHECKS = { plugin: 'boxis', key: 'checks' } as const
+function celebrate($: EngineInterface, added: number) {
+  void $.state.set(CHECKS, added)
+    .then(() => $.clock.now()).then(t => $.state.set(CELEBRATE, t)).catch(() => {})
 }
 // 32-bit FNV-1a plus the length: short to store and stable across sessions.
 export function signature(text: string): string {
