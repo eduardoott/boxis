@@ -77,7 +77,7 @@ test('errors: unknown type, bad colour, intensity out of range', () => {
 
 test('a malformed saved config reads as the defaults', () => {
   expect(readConfig(null)).toEqual(DEFAULTS)
-  expect(readConfig({ enabled: false, intensity: 999, types: { warning: { color: 'x' } } })).toEqual({ enabled: false, intensity: 100, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, types: {} })
+  expect(readConfig({ enabled: false, intensity: 999, types: { warning: { color: 'x' } } })).toEqual({ enabled: false, intensity: 100, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, unlimitedPins: false, types: {} })
 })
 
 test('a light screen lightens the backgrounds; the pane buttons walk the palette and wrap around', () => {
@@ -185,4 +185,19 @@ test('max pins: 5 by default, clamped to 1..10 on read and on change, set by /bo
   step('default')
   expect(cfg().maxPins).toBe(10)
   expect('error' in apply(DEFAULTS, { maxPins: Number('x') })).toBe(true)
+})
+
+test('pins limit: on by default; /boxis pins limit off keeps every pin, on brings the max back, reset keeps it', () => {
+  expect(readConfig(undefined).unlimitedPins).toBe(false)
+  expect(readConfig({ unlimitedPins: 'yes' }).unlimitedPins).toBe(false)
+  expect(readConfig({ unlimitedPins: true }).unlimitedPins).toBe(true)
+  expect(parseCommand('pins limit off')).toEqual({ unlimitedPins: true })
+  expect(parseCommand('pins limit ON')).toEqual({ unlimitedPins: false })
+  expect('error' in (parseCommand('pins limit x') as object)).toBe(true)
+  const r = apply(DEFAULTS, { unlimitedPins: true })
+  if (!('cfg' in r)) throw new Error(r.error)
+  expect(summary(r.cfg)).toContain('max pins no limit')
+  const back = apply(r.cfg, { reset: true })
+  if (!('cfg' in back)) throw new Error(back.error)
+  expect(back.cfg.unlimitedPins).toBe(true)
 })

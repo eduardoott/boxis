@@ -31,6 +31,7 @@ By hand: `/boxis` opens the colour panel (◀ ▶ buttons per type, intensity, m
 - `skin`: `none` (plain boxes), `animated-i` (the title line animated: a dot pulses and a glow runs along the border on arrival, the box and its buttons light under the pointer, the pin spins, the ✓ fills up while the title wipes out, and the box blinks while closing) or `animated-ii` (Neon: all of that with bold borders and brighter titles, a border drawn in on arrival with a spark at each corner, the pointer on the title row runs a shimmer across the title, a closing ramp to green with two glow laps, and a spark burst with a lap of light when pinning).
 - `buttons`: `top` (default) or `bottom`, where the pin and check buttons sit on the box: the top right or the bottom right.
 - `maxPins` (1 to 10, default 5): pins kept per session; past it, pinning a box unpins the oldest.
+- `unlimitedPins` (default false): true keeps every pin, with no per-session limit; false brings `maxPins` back.
 - `types.<type>.color`: border and title colour, `#RRGGBB`, or `default`.
 - `types.<type>.background`: fixed background `#RRGGBB`, `none`, or `default` (back to automatic by intensity).
 - `reset: true`: resets all colours and the intensity to the original.

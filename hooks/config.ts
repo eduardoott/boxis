@@ -42,9 +42,9 @@ export type Buttons = 'top' | 'bottom'
 const BUTTONS: Buttons[] = ['top', 'bottom']
 const buttonsFrom = (v: unknown): Buttons | undefined => BUTTONS.includes(v as Buttons) ? v as Buttons : undefined
 
-export type Config = { enabled: boolean; intensity: number; light: boolean; check: boolean; skin: Skin; buttons: Buttons; maxPins: number; types: Partial<Record<BoxType, TypeStyle>> }
+export type Config = { enabled: boolean; intensity: number; light: boolean; check: boolean; skin: Skin; buttons: Buttons; maxPins: number; unlimitedPins: boolean; types: Partial<Record<BoxType, TypeStyle>> }
 
-export const DEFAULTS: Config = { enabled: true, intensity: 50, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, types: {} }
+export const DEFAULTS: Config = { enabled: true, intensity: 50, light: false, check: true, skin: 'none', buttons: 'top', maxPins: 5, unlimitedPins: false, types: {} }
 
 // Pins per session: a short list stays a list of what matters now, not a second transcript.
 export const MIN_PINS = 1
@@ -148,6 +148,7 @@ export function readConfig(v: unknown): Config {
     skin,
     buttons,
     maxPins,
+    unlimitedPins: o.unlimitedPins === true,
     types,
   }
 }
@@ -161,6 +162,7 @@ export type Change = {
   buttons?: string
   intensity?: number
   maxPins?: number
+  unlimitedPins?: boolean
   types?: Record<string, { color?: string; background?: string }>
   reset?: boolean
 }
@@ -171,7 +173,7 @@ const NO_BACKGROUND = ['none', 'nenhum']
 
 export function apply(cfg: Config, m: Change): { cfg: Config } | { error: string } {
   const next: Config = m.reset
-    ? { ...DEFAULTS, types: {}, enabled: cfg.enabled, light: cfg.light, check: cfg.check, skin: cfg.skin, buttons: cfg.buttons, maxPins: cfg.maxPins }
+    ? { ...DEFAULTS, types: {}, enabled: cfg.enabled, light: cfg.light, check: cfg.check, skin: cfg.skin, buttons: cfg.buttons, maxPins: cfg.maxPins, unlimitedPins: cfg.unlimitedPins }
     : { ...cfg, types: { ...cfg.types } }
   if (m.enabled !== undefined) next.enabled = !!m.enabled
   if (m.light !== undefined) next.light = !!m.light
@@ -194,6 +196,7 @@ export function apply(cfg: Config, m: Change): { cfg: Config } | { error: string
     }
     next.intensity = Math.round(m.intensity)
   }
+  if (m.unlimitedPins !== undefined) next.unlimitedPins = !!m.unlimitedPins
   if (m.maxPins !== undefined) {
     if (typeof m.maxPins !== 'number' || !isFinite(m.maxPins)) return { error: `max pins goes from ${MIN_PINS} to ${MAX_PINS}.` }
     next.maxPins = clampPins(m.maxPins)
@@ -218,7 +221,7 @@ export function apply(cfg: Config, m: Change): { cfg: Config } | { error: string
 
 export function summary(cfg: Config): string {
   const lines = [
-    `Boxis ${cfg.enabled ? 'on' : 'off'} · background intensity ${cfg.intensity} · ${cfg.light ? 'light' : 'dark'} screen · check ${cfg.check ? 'on' : 'off'} · skin ${cfg.skin} · buttons ${cfg.buttons} · max pins ${cfg.maxPins}`,
+    `Boxis ${cfg.enabled ? 'on' : 'off'} · background intensity ${cfg.intensity} · ${cfg.light ? 'light' : 'dark'} screen · check ${cfg.check ? 'on' : 'off'} · skin ${cfg.skin} · buttons ${cfg.buttons} · max pins ${cfg.unlimitedPins ? 'no limit' : cfg.maxPins}`,
     ...TYPES.map(t => {
       const v = style(cfg, t)
       const changed = cfg.types[t] ? ' (adjusted)' : ''
@@ -233,6 +236,7 @@ export const HELP = [
   '/boxis status                         shows the config as text',
   '/boxis pins                           opens the pins of this session (⚲ on a box pins it)',
   '/boxis pins max 1-10                  pins kept per session; past it, pinning drops the oldest',
+  '/boxis pins limit on | off            off keeps every pin (no limit); on brings the max back',
   '/boxis on | off                       turns the boxes on or off',
   '/boxis screen light | dark            backgrounds for a light or a dark screen',
   '/boxis check on | off                 ✓ button to mark a box as understood',
@@ -254,6 +258,11 @@ export function parseCommand(args: string): Change | 'status' | 'panel' | 'pins'
   if (!c) return 'panel'
   if (c === 'status') return 'status'
   if ((c === 'pins' || c === 'pin' || c === 'fixadas') && a2 === 'max' && b !== undefined) return { maxPins: Number(b) }
+  if ((c === 'pins' || c === 'pin' || c === 'fixadas') && a2 === 'limit') {
+    if (b?.toLowerCase() === 'on') return { unlimitedPins: false }
+    if (b?.toLowerCase() === 'off') return { unlimitedPins: true }
+    return { error: 'pins limit: on or off.' }
+  }
   if (c === 'pins' || c === 'pin' || c === 'fixadas') return 'pins'
   if (c === 'screen' || c === 'tela') {
     if (a2 === 'light' || a2 === 'clara') return { light: true }

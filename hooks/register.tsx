@@ -477,7 +477,8 @@ async function setPin($: EngineInterface, id: string, on: boolean, info?: BoxInf
   let pinned = false
   let dropped: Pin[] = []
   const created = await $.clock.now()
-  const limit = (await fresh($)).maxPins
+  const cfg = await fresh($)
+  const limit = cfg.unlimitedPins ? Infinity : cfg.maxPins
   const saved = await savePins($, list => {
     const has = list.some(p => p.id === id)
     if (!on) return has ? list.filter(p => p.id !== id) : list
@@ -582,7 +583,7 @@ export const register: Register = on => {
     await $.command.register({ name: 'boxis', description: 'Boxis: opens the colour panel, or on/off, intensity, skin, buttons and colour per type', argumentHint: '[status | pins | pins max N | on | off | check on|off | skin none|animated-i|animated-ii | buttons top|bottom | screen light|dark | intensity N | color <type> #hex | background <type> #hex | default]' })
     await $.tool.register({
       name: 'design',
-      description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (enabled), the ✓ button that marks a box as understood (check), the skin, which is the look and effects of the boxes (skin: none, animated-i, animated-ii), where the pin and check buttons sit (buttons: top, bottom), background intensity (intensity, 0 to 100), light or dark screen (light), pins kept per session (maxPins, 1 to 10) and, per type, the border and title colour (color) and the background colour (background). Types: ${TYPES_LIST}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
+      description: `Changes the look of the Boxis mod (the coloured boxes around the answers): on/off (enabled), the ✓ button that marks a box as understood (check), the skin, which is the look and effects of the boxes (skin: none, animated-i, animated-ii), where the pin and check buttons sit (buttons: top, bottom), background intensity (intensity, 0 to 100), light or dark screen (light), pins kept per session (maxPins, 1 to 10, or no limit with unlimitedPins) and, per type, the border and title colour (color) and the background colour (background). Types: ${TYPES_LIST}. A colour is #RRGGBB; "default" restores the original; background "none" removes the background. Returns the full config after the change. Call with no fields to only read it.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -602,6 +603,7 @@ export const register: Register = on => {
           },
           light: { type: 'boolean', description: 'true when the screen is light: backgrounds get lighter instead of darker.' },
           maxPins: { type: 'integer', minimum: 1, maximum: 10, description: 'Pins kept per session (default 5). Past it, pinning a box unpins the oldest.' },
+          unlimitedPins: { type: 'boolean', description: 'true keeps every pin, with no per-session limit (default false: maxPins applies).' },
           reset: { type: 'boolean', description: 'Restores every colour and the intensity to the original.' },
         },
         additionalProperties: false,
@@ -729,9 +731,10 @@ export const register: Register = on => {
           <Text>{String(cfg.intensity).padStart(3)}</Text>
           <Button key="intensity-up" label="+" onPress={go({ intensity: Math.min(100, cfg.intensity + 10) })} />
           <Text dimColor>max pins</Text>
-          <Button key="pins-down" label="−" onPress={go({ maxPins: Math.max(MIN_PINS, cfg.maxPins - 1) })} />
-          <Text>{String(cfg.maxPins).padStart(2)}</Text>
-          <Button key="pins-up" label="+" onPress={go({ maxPins: Math.min(MAX_PINS, cfg.maxPins + 1) })} />
+          {cfg.unlimitedPins ? null : <Button key="pins-down" label="−" onPress={go({ maxPins: Math.max(MIN_PINS, cfg.maxPins - 1) })} />}
+          {cfg.unlimitedPins ? null : <Text>{String(cfg.maxPins).padStart(2)}</Text>}
+          {cfg.unlimitedPins ? null : <Button key="pins-up" label="+" onPress={go({ maxPins: Math.min(MAX_PINS, cfg.maxPins + 1) })} />}
+          <Button key="pins-limit" label={cfg.unlimitedPins ? 'no limit' : 'limited'} onPress={go({ unlimitedPins: !cfg.unlimitedPins })} />
           <Button key="screen" label={cfg.light ? 'light screen' : 'dark screen'} onPress={go({ light: !cfg.light })} />
           <Button key="check" label={cfg.check ? 'check on' : 'check off'} onPress={go({ check: !cfg.check })} />
           <Button key="skin" label={`skin: ${cfg.skin}`} onPress={go({ skin: nextSkin(cfg.skin) })} />

@@ -49,6 +49,7 @@ A labelled prefix needs the emoji, the label and the colon: `🧪 Test` without 
 /boxis buttons top|bottom        the pin and check buttons at the top right or the bottom right of the box
 /boxis pins                      opens the Pins pane
 /boxis pins max 1-10             pins kept per session (default 5)
+/boxis pins limit on|off         off keeps every pin, with no limit (default on)
 /boxis default                   every colour and the intensity back to the original (the pin limit stays)
 ```
 
@@ -68,7 +69,7 @@ Each box has a ○ on its title line. Clicking it marks the box as understood: i
 
 ## Pins
 
-The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Checking a box (✓, in the chat or in the pane) also unpins it. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). At the limit, pinning a new box unpins the oldest one of the session and a toast names it. Lowering the limit unpins nothing by itself: a session over it is trimmed on its next new pin. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so expiry is what clears the pins those sessions leave behind. The size of the stored pins is capped by a byte budget: past it, the oldest pins go first.
+The pin glyph ⚲ on a box pins it; it turns 📌. Pinning opens the **Pins** pane (`/boxis pins` opens it too), which redraws each pinned box as in the chat, with × to unpin. Checking a box (✓, in the chat or in the pane) also unpins it. Pins are kept per session, 5 by default and up to 10 (`/boxis pins max N` or the −/+ in the colour pane). `/boxis pins limit off` (or the limited/no limit button in the pane) drops the limit, so pinning never unpins anything; the byte budget below still applies. At the limit, pinning a new box unpins the oldest one of the session and a toast names it. Lowering the limit unpins nothing by itself: a session over it is trimmed on its next new pin. A pin older than 30 days is dropped on the next pin change, from any session: the mod is never told when a session is archived or deleted, so expiry is what clears the pins those sessions leave behind. The size of the stored pins is capped by a byte budget: past it, the oldest pins go first.
 
 In the terminal, ↗ on a pin jumps back to that box in the chat. Jumping works only in the terminal: the desktop app does not support it yet, so there the pane shows the boxes with × alone.
 

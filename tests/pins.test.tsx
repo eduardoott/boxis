@@ -282,6 +282,13 @@ test('pin limit follows maxPins: 1 keeps only the newest; unpinning never drops 
   await ui.unmount()
 })
 
+test('no pin limit: unlimitedPins keeps the sixth pin and drops nothing', async ($, on) => {
+  const { pins, toasts } = world(on, { config: { maxPins: 1, unlimitedPins: true } })
+  for (let i = 0; i < 6; i++) await (async () => { const ui = await mount($, 'desktop', `m${i}`, answerOf(i)); await ui.press({ key: 'pin-1' }); await ui.unmount() })()
+  expect(pins().map(p => p.excerpt)).toEqual(['Warn 0.', 'Warn 1.', 'Warn 2.', 'Warn 3.', 'Warn 4.', 'Warn 5.'])
+  expect(toasts).toEqual([])
+})
+
 test('pin limit: a session already over the limit keeps its pins until a new pin trims it', async ($, on) => {
   const old = Array.from({ length: 8 }, (_, i) => ({ id: `h${i}:0`, type: 'body', title: 'answer', excerpt: `h${i}`, created: 1_799_999_999_000 + i }))
   const { pins, toasts } = world(on, { pins: { s1: old } })
